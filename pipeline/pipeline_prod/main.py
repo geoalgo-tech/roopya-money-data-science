@@ -3,9 +3,24 @@ import json
 import string
 import random
 import re
+import io
 from google.cloud import bigquery
 import pandas as pd
 from google.cloud import storage
+import numpy as np
+from scipy.stats.mstats import winsorize
+from sklearn.preprocessing import StandardScaler
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn import preprocessing
+import requests
+#from sklearn.model_selection import train_test_split
+#from imblearn.over_sampling import SMOTE
+#from sklearn.linear_model import LogisticRegression
+#from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+#from xgboost import XGBClassifier
+#from sklearn.tree import DecisionTreeClassifier
+#from sklearn.metrics import classification_report, accuracy_score, precision_score, recall_score, f1_score, roc_curve, precision_recall_curve, auc, confusion_matrix
 
 
 def token_gen():
@@ -27,8 +42,9 @@ bucket_name = 'roopya_analytics_workarea'
 base_filename = 'PYTHON_PREPROCESS1'
 #token = random.choices(string.ascii_letters, k=12)
 object_path = f'Swarnavo/Pipeline/{base_filename}_{token}.csv'
-base_filename = 'PYTHON_PREPROCESS1'
+#base_filename = 'PYTHON_PREPROCESS1'
 base_filename_product = 'PRODUCT'
+object_path_product = f'Swarnavo/Pipeline/{base_filename_product}_{token}.csv'
 
 # Define the schema for the BigQuery table
 #Input Schema
@@ -842,10 +858,10 @@ def Python1(table_id, token):
     #Cell 1
     query =  f'''SELECT * FROM `{PROJECT_ID}.{DATASET_ID}.{table_id}`;'''
     # Run the query
-    print(PROJECT_ID)
-    print(DATASET_ID)
-    print(table_id)
-    print(query)
+    #print(PROJECT_ID)
+    #print(DATASET_ID)
+    #print(table_id)
+    #print(query)
     query_job = client.query(query)
     results = query_job.result()
     #Mama
@@ -954,6 +970,9 @@ def Python1(table_id, token):
 
     df.columns[df.isnull().any()]
 
+    #print(df)
+    #print(df['ACCOUNT_TYPE'])
+
     # Define loan categories
     loan_categories = {
         'Credit Card': 'Credit Card', 'Loan on Credit Card': 'Credit Card', 'Secured Credit Card': 'Credit Card',
@@ -967,8 +986,12 @@ def Python1(table_id, token):
         'Microfinance Housing Loan': 'Home Loan'
     }
 
+
     # Map the loan categories to the 'ACCOUNT_TYPE' column
     df['Loan Category'] = df['ACCOUNT_TYPE'].map(loan_categories)
+    #print("df after loan", df.columns)
+    #print("df loan categories", df['Loan Category'])
+    print(df[['ACCOUNT_TYPE', 'Loan Category']])
 
     # Pivot the DataFrame to create separate columns for each loan category
     acc_df = df.pivot_table(index='CREDIT_REPORT_ID', columns='Loan Category', aggfunc= 'size', fill_value=0)
@@ -976,10 +999,41 @@ def Python1(table_id, token):
     # Reset the index to make 'CREDIT_REPORT_ID' a column again
     acc_df.reset_index(inplace=True)
 
+
+    print("Account df",acc_df)
+    
+    if 'Credit Card' not in acc_df.columns:
+        acc_df['Credit Card'] = 0
+    else:
+        pass
+    
+    if 'Home Loan' not in acc_df.columns:
+        acc_df['Home Loan'] = 0
+    else:
+        pass
+    
+    if 'Auto Loan' not in acc_df.columns:
+        acc_df['Auto Loan'] = 0
+    else:
+        pass    
+    
+    if 'Personal Loan' not in acc_df.columns:
+        acc_df['Personal Loan'] = 0
+    else:
+        pass
+    
+    print("Account df new",acc_df)
+    print('###############################################################################')
+    
+
     # Rename columns for better readability
     acc_df.rename(columns={'Credit Card': 'ACCOUNT_TYPE_Credit Card', 'Home loan': 'ACCOUNT_TYPE_Home Loan', 'Auto Loan': 'ACCOUNT_TYPE_Auto Loan', 'Personal Loan': 'ACCOUNT_TYPE_Personal Loan'}, inplace=True)
 
+
+
     merged_df = acc_df.merge(df, on="CREDIT_REPORT_ID", how="left")
+
+    #print("Merged df",merged_df.columns)
 
     merged_df["CREDIT_REPORT_ID"].duplicated().sum()
 
@@ -993,6 +1047,17 @@ def Python1(table_id, token):
     # Reset index to have 'CREDIT_REPORT_ID' as a regular column
     ct_df.reset_index(inplace=True)
 
+    if 'PRB' not in ct_df.columns:
+        ct_df['PRB'] = 0
+    else:
+        pass
+
+    if 'NBF' not in ct_df.columns:
+        ct_df['NBF'] = 0
+    else:
+        pass    
+
+
     # Rename columns for better readability
     ct_df.rename(columns={'PRB': 'CONTRIBUTOR_TYPE_PRB', 'NBF': 'CONTRIBUTOR_TYPE_NBF'}, inplace=True)
 
@@ -1000,6 +1065,26 @@ def Python1(table_id, token):
 
     # Pivot OWNERSHIP_IND data
     oi_df = df.pivot_table(index = 'CREDIT_REPORT_ID', columns = 'OWNERSHIP_IND', aggfunc = 'size', fill_value = 0)
+
+    if 'Individual' not in oi_df.columns:
+        oi_df['Individual'] = 0
+    else:
+        pass
+
+    if 'Supl Card Holder' not in oi_df.columns:
+        oi_df['Supl Card Holder'] = 0
+    else:
+        pass
+
+    if 'Joint' not in oi_df.columns:
+        oi_df['Joint'] = 0
+    else:
+        pass
+
+    if 'Guarantor' not in oi_df.columns:
+        oi_df['Guarantor'] = 0
+    else:
+        pass
 
     # Reset index to have 'CREDIT_REPORT_ID' as a regular column
     oi_df.reset_index(inplace=True)
@@ -1015,6 +1100,17 @@ def Python1(table_id, token):
     # Reset index and remove the name of the columns index
     as_df.reset_index(inplace=True)
 
+    if 'Active' not in as_df.columns:
+        as_df['Active'] = 0
+    else:
+        pass
+
+    if 'Closed' not in as_df.columns:
+        as_df['Closed'] = 0
+    else:
+        pass
+    
+
     # Rename columns for better readability
     as_df.rename(columns={'Active': 'ACCOUNT_STATUS_Active', 'Closed': 'ACCOUNT_STATUS_Closed'}, inplace=True)
 
@@ -1023,7 +1119,7 @@ def Python1(table_id, token):
     agg_data = df[['CREDIT_REPORT_ID', 'ACCOUNT_STATUS', 'CURRENT_BALANCE', 'OVERDUE_AMOUNT']]
     df_dummy = pd.DataFrame({'CREDIT_REPORT_ID': ['RoopyaDummy', 'RoopyaDummy'], 'ACCOUNT_STATUS': ['Active', 'Closed'], 'CURRENT_BALANCE': [0,0], 'OVERDUE_AMOUNT': [0,0]})
     agg_data = pd.concat([agg_data, df_dummy])
-    print(agg_data)
+    #print(agg_data)
 
     def aggregation(df):
         # Create a pivot table to aggregate balances and overdue amounts
@@ -1037,7 +1133,7 @@ def Python1(table_id, token):
         
         # Reset the index to make 'CREDIT_REPORT_ID' a regular column
         pivot_df.reset_index(inplace=True)
-        print("pivot_df",pivot_df.columns)
+        #print("pivot_df",pivot_df.columns)
         
         return pivot_df
 
@@ -1051,7 +1147,7 @@ def Python1(table_id, token):
     merged3_df["ROOPYA_ACCOUNT_STATUS"].value_counts()
 
     cri_df = merged3_df[['CREDIT_REPORT_ID', 'ROOPYA_ACCOUNT_STATUS']]
-    print("cri_df",cri_df.columns)
+    #print("cri_df",cri_df.columns)
 
     # Custom function to determine the final status
     def categorize_customer(group):
@@ -1065,10 +1161,10 @@ def Python1(table_id, token):
             return 'Good'
 
     result = cri_df.groupby('CREDIT_REPORT_ID').apply(categorize_customer)
-
+    print('result', result)
     # Create a new DataFrame with the summarized results
     final_status_df = result.reset_index(name='ROOPYA_CUSTOMER_STATUS')
-    print("Final_status_df",final_status_df.columns)
+    #print("Final_status_df",final_status_df.columns)
 
     df_1 = merged3_df.drop(columns = ['ACCOUNT_TYPE', 'CONTRIBUTOR_TYPE', 'OWNERSHIP_IND', 'ACCOUNT_STATUS','ROOPYA_ACCOUNT_STATUS', 'Loan Category'])
     df_2 = final_status_df.drop(columns = ['CREDIT_REPORT_ID'])
@@ -1099,7 +1195,8 @@ def Python1(table_id, token):
 
     df10 = df10.drop(columns = ['Closed_CURRENT_BALANCE', 'Closed_OVERDUE_AMOUNT'], axis = 1)
     df10 = df10[df10['CREDIT_REPORT_ID']!= 'RoopyaDummy']
-    print(df10)
+    print("Columns after preprocesssing:",df10.columns)
+
     csv_data = df10.to_csv(index=False)
     bucket = storage_client.get_bucket(bucket_name)
 
@@ -1110,6 +1207,193 @@ def Python1(table_id, token):
     print(f'DataFrame saved to GCS: gs://{bucket_name}/{object_path}')
         
     return    
+
+
+def Credit_Card_Model_Call(df_request_json):
+
+    df = df_request_json.copy()
+
+    # Function to convert year month (str) to total months (int)
+    def convert_to_months(duration_str):
+        pattern = r'(\d+)\s*yrs\s+(\d+)\s*mon'
+        match = re.match(pattern, duration_str, re.IGNORECASE)
+        if match:
+            years = int(match.group(1))
+            months = int(match.group(2))
+            total_months = years * 12 + months
+            return total_months
+        else:
+            return None
+
+    # Apply the function to the AVERAGE_ACCOUNT_AGE column
+    df['AVERAGE_ACCOUNT_AGE_IN_MONTHS'] = df['AVERAGE_ACCOUNT_AGE'].apply(lambda x: convert_to_months(x))
+
+    # Drop the column with the uniques credit report id 
+    df = df.drop(columns = ['CREDIT_REPORT_ID', 'OVERDUE_AMOUNT', 'AVERAGE_ACCOUNT_AGE'], axis = 1)
+
+    #print(df.columns)
+    print('Subh', df['ACCOUNT_TYPE_Credit Card'])
+
+    # Keep the rows where a customer has atleast one Credit Card
+    #if df[df['ACCOUNT_TYPE_Credit Card']] == 0:
+    #    pass
+    #else:
+    df = df[df['ACCOUNT_TYPE_Credit Card'] != 0]
+
+    #print("Mama:", df)
+
+    # Resetting index after some rows are deleted
+    df = df.reset_index(drop=True)
+
+    # Replace the str value Good by 1 and Bad by 0 for final modelling
+    df['ROOPYA_CUSTOMER_STATUS'] = df['ROOPYA_CUSTOMER_STATUS'].replace({'Bad': 0, 'Good': 1})
+
+
+    median_value = df['AGE_COHORT'].median()
+
+    # Replace null values with the median value
+    df['AGE_COHORT'].fillna(median_value, inplace=True)
+
+    # Columns to scalling and replacing outliers
+    columns_to_deal = ['ACCOUNT_TYPE_Auto_Loan', 'ACCOUNT_TYPE_Credit Card', 'ACCOUNT_TYPE_Home_Loan', 'ACCOUNT_TYPE_Personal_Loan', 'PRIMARY_NO_OF_ACCOUNTS', 'PRIMARY_ACTIVE_ACCOUNTS', 'PRIMARY_OVERDUE_ACCOUNTS', 'PRIMARY_CURRENT_BALANCE', 'PRIMARY_SANCTIONED_AMOUNT', 'PRIMARY_DISTRIBUTED_AMOUNT', 'PRIMARY_INSTALLMENT_AMOUNT', 'NEW_ACCOUNTS_IN_LAST_SIX_MONTHS', 'NO_OF_INQUIRIES', 'Active_CURRENT_BALANCE', 'Active_OVERDUE_AMOUNT',  'INCOME', 'CONTRIBUTOR_TYPE_NBF', 'CONTRIBUTOR_TYPE_PRB', 'OWNERSHIP_IND_Guarantor', 'OWNERSHIP_IND_Individual', 'OWNERSHIP_IND_Joint', 'OWNERSHIP_IND_Supl_Card_Holder', 'ACCOUNT_STATUS_Active', 'ACCOUNT_STATUS_Closed', 'AVERAGE_ACCOUNT_AGE_IN_MONTHS']
+
+
+    df1 = df.drop(["ROOPYA_CUSTOMER_STATUS", "STATE"], axis = 1)
+
+    scaler = StandardScaler()
+
+    # Fit the scaler on your DataFrame (computes mean and standard deviation)
+    #scaler.fit(df1)
+
+    # Transform your DataFrame to apply standard scaling
+    #scaled_df = pd.DataFrame(scaler.transform(df1), columns = df1.columns)
+
+    #sc_df = df.copy()
+    #sl_df = scaled_df.copy()
+
+    print('Scaled data initiation')
+
+
+    #df_1 = df1
+    #df_2 = df['AGE_COHORT']
+    df_3 = df['ROOPYA_CUSTOMER_STATUS']
+    #df_4 = result_df.drop('AGE_COHORT', axis = 1)
+
+    # Reseting index for concatinating 
+    df_1 = df1.reset_index()
+    #df_3 = df_3.reset_index()
+    #df_4 = df_4.reset_index()
+
+    print('df1',df1.head())
+    print('df1 columns:',df1.columns)
+    #Concatination
+    sg_df1 = pd.concat([df_1, df_3], axis = 1)
+    #sg_df = pd.concat([sg_df1, df_3], axis = 1)
+    sg_df = sg_df1.drop(columns = 'index', axis = 1)
+
+    label_encoder = preprocessing.LabelEncoder()
+  
+    # Encode labels in column 'species'.
+    sg_df['AGE_COHORT']= label_encoder.fit_transform(sg_df['AGE_COHORT'])
+
+    X = sg_df.drop(columns = ['PRIMARY_SANCTIONED_AMOUNT', 'CURRENT_BALANCE', 'ROOPYA_CUSTOMER_STATUS'], axis = 1)
+
+    df12 = X
+
+    base_filename_X = 'Independent variable data'
+    object_path_X = f'Swarnavo/Pipeline/{base_filename_X}_{token}.csv'
+    csv_data_df12 = df12.to_csv(index=False)
+    bucket = storage_client.get_bucket(bucket_name)
+
+    # Create a GCS Blob and upload the CSV data
+    blob = bucket.blob(object_path_X)
+    blob.upload_from_string(csv_data_df12, content_type='text/csv')
+
+    print(f'Independent variable data DataFrame saved to GCS: gs://{base_filename_X}/{object_path_X}')
+
+    print('Independent variable data uploaded sucessfully')
+
+    print("X", X.head())
+    print(X)
+
+    print("Model level Data Preprocessing successful")
+    def call_endpoint(X):
+
+        payload = X.to_json(orient='records')
+
+        #print(X.head())
+
+        base_filename_json = 'Payload'
+        object_path_json = f'Swarnavo/Pipeline/{base_filename_json}_{token}.json'
+        json_data = X.to_json(orient='records') 
+        bucket = storage_client.get_bucket(bucket_name)
+
+        blob = bucket.blob(object_path_json)
+        blob.upload_from_string(json_data, content_type='application/json')
+
+        print('Payload uploaded sucessfully')
+
+        #print(payload[0])
+        # Iterate through the list and print values as lists for dictionaries
+        '''
+        vl = []
+        for item in payload:
+            if isinstance(item, dict):
+                values_list = list(item.values())
+                vl.append(values_list)
+
+        print(vl)
+        '''
+        dic = {}
+        vl = []
+        values_list = []
+
+        '''
+        for item in payload:
+            if isinstance(item, dict):
+                values_list = list(item.values())
+                vl.append(values_list)
+        print(values_list)
+        print('vl:', vl)
+        '''
+        # key = "\"instances\""
+        # value = X.values.tolist()
+        # result = {key: value}
+
+        dic["instances"] = X.values.tolist()
+        json_request = json.dumps(dic)
+        print(json_request)
+        #data = X.values.tolist()
+        #print(data)
+
+        #print(result)
+        #print(instances_data)
+        print('*******************************************')
+
+
+        #print('Payload:',payload)
+        API_URL = 'https://asia-south1-aiplatform.googleapis.com/v1/projects/303650502197/locations/asia-south1/endpoints/384433245535600640:predict'
+        headers = {'Content-Type': 'application/json', 'Authorization': 'Bearer ya29.a0AfB_byC1yoLFW7-EEE7hU3htLQeQRX_kquz1wR5j5UASNBvfeFGlaNI7oOjCOm6ou8P5MF0EwOMZmvUSGFDi102P1w3Us-D3aaxvbdrNw3McbsO6u5VBABd5G3Fbdb9TNNPOt1GNkxbLG4mQQDJLPSiYRcnwv-hgWau53WKEfchYSRNjyCpWDrXkvfutGENNlAESfQOND5VbqXvxb5SbxxAVXRhSgndGxv-hFnpZzFTSGx9e37D0ggplfMZoNMU84M6s9owjjq8je6gjgAbZI1HUWb-nMPqySJt_NfJXReYtzXjaU-fa-NuRnpWvma0bQy5y2n1H6YuIRYC0Jv-PSgrJZz2RM2DTLtSuzMn4wCEE3rCFeUBfMuYby3hT0FEr_9Qcx212YazzU3w-oO7EV_udvuB3OlMaCgYKAbASARESFQGOcNnCagIb2tsRo5a6fQ9CI9S7WA0422'}
+
+        try:
+            response = requests.post(API_URL, data=json_request, headers=headers)
+            
+            # Check for a successful response (HTTP status code 200)
+            if response.status_code == 200:
+                print("Request was successful")
+                print(response.json())  # Print the API response
+            else:
+                print(f"Request failed with status code: {response.status_code}")
+                print(response.text)  # Print the response content for debugging
+        except Exception as e:
+            print(f"An error occurred: {str(e)}")
+
+            return
+    call_endpoint(X)
+    print('Endpoint hitted Successfully')
+
+    return
+
 
 
 
@@ -1354,6 +1638,29 @@ def save_to_bigquery(request):
             print("Successfully deleted: ", preprocess_table_id_2)
 
             print("----------------------------------------------------------------")
+
+            bucket = storage_client.get_bucket(bucket_name)
+            blob_product = bucket.blob(object_path_product)
+            data_product = blob_product.download_as_text()
+
+            df_product = pd.read_csv(io.StringIO(data_product))
+            
+            bucket = storage_client.get_bucket(bucket_name)
+            blob = bucket.blob(object_path)
+            data = blob.download_as_text()
+
+            # Read the CSV data into a DataFrame
+            df_request_json = pd.read_csv(io.StringIO(data))
+
+            print("Data Read Sucessfully")
+
+            print("df_request_json:", df_request_json.columns)
+
+            #if df_product['Product'] == 'Credit Card':
+            Credit_Card_Model_Call(df_request_json)
+
+
+            
             
             #return f"All BigQuery steps are successful, Table deleated as: '{preprocess_table_id_2}'."
             return f"All BigQuery steps are successful, Table deleated as: '{preprocess_table_id_2}' and Preprocessed python DataFrame saved to GCS: gs://{bucket_name}/{object_path}."
