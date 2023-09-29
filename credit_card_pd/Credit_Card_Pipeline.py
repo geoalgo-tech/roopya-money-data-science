@@ -1,4 +1,4 @@
-pip install imbalanced-learn
+! pip install imbalanced-learn
 
 # Import necessary libraries
 from google.cloud import bigquery
@@ -38,7 +38,7 @@ def convert_to_months(duration_str):
     match = re.match(pattern, duration_str, re.IGNORECASE)
     if match:
         years = int(match.group(1))
-        months = int(match.group(2# Initialize the BigQuery client
+        months = int(match.group(2))
         total_months = years * 12 + months
         return total_months
     else:
@@ -46,7 +46,7 @@ def convert_to_months(duration_str):
 
 # Apply the function to the AVERAGE_ACCOUNT_AGE column
 df['AVERAGE_ACCOUNT_AGE_IN_MONTHS'] = df['AVERAGE_ACCOUNT_AGE'].apply(lambda x: convert_to_months(x))
-                                 
+                                       
 # Keep the rows where a customer has atleast one Credit Card
 df = df[df['ACCOUNT_TYPE_Credit_Card'] != 0]
 
