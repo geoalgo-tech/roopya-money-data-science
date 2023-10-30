@@ -13,17 +13,15 @@ from sklearn.preprocessing import StandardScaler
 import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn import preprocessing
-import requests
+from flask import request, Response
 import google.auth
 import google.auth.transport.requests
+import gc
+from Credit_Card_Model_Call import Credit_Card_Model_Call
+from Home_Loan_Model_Call import Home_Loan_Model_Call
+from Auto_Loan_Model_Call import Auto_Loan_Model_Call
+from Personal_Loan_Model_Call import Personal_Loan_Model_Call
 
-#from sklearn.model_selection import train_test_split
-#from imblearn.over_sampling import SMOTE
-#from sklearn.linear_model import LogisticRegression
-#from sklearn.ensemble import RandomForestClassifier, VotingClassifier
-#from xgboost import XGBClassifier
-#from sklearn.tree import DecisionTreeClassifier
-#from sklearn.metrics import classification_report, accuracy_score, precision_score, recall_score, f1_score, roc_curve, precision_recall_curve, auc, confusion_matrix
 
 
 def token_gen():
@@ -48,6 +46,9 @@ object_path = f'Swarnavo/Pipeline/{base_filename}_{token}.csv'
 #base_filename = 'PYTHON_PREPROCESS1'
 base_filename_product = 'PRODUCT'
 object_path_product = f'Swarnavo/Pipeline/{base_filename_product}_{token}.csv'
+
+
+
 
 # Define the schema for the BigQuery table
 #Input Schema
@@ -336,6 +337,36 @@ client = bigquery.Client(project=PROJECT_ID, location=LOCATION)
 storage_client = storage.Client(project=PROJECT_ID)
 
 
+def delete_common_preprocessing():
+    file_name = f'Swarnavo/Pipeline/{base_filename}_{token}.csv'
+    bucket = storage_client.get_bucket(bucket_name)
+
+    # Specify the blob (file) to delete
+    blob = bucket.blob(file_name)
+
+    try:
+        # Delete the blob (file)
+        blob.delete()
+        return f'Successfully deleted {file_name} from {bucket_name}'
+    except Exception as e:
+        return f'Error deleting {file_name}: {str(e)}'
+    
+
+def delete_product_file():
+    file_name = f'Swarnavo/Pipeline/{base_filename_product}_{token}.csv'
+    bucket = storage_client.get_bucket(bucket_name)
+
+    # Specify the blob (file) to delete
+    blob = bucket.blob(file_name)
+
+    try:
+        # Delete the blob (file)
+        blob.delete()
+        return f'Successfully deleted {file_name} from {bucket_name}'
+    except Exception as e:
+        return f'Error deleting {file_name}: {str(e)}'
+
+
 def insert_rows_into_bigquery(table_ref, rows_to_insert):
     try:
         # Explicitly specify the schema when inserting rows
@@ -346,7 +377,6 @@ def insert_rows_into_bigquery(table_ref, rows_to_insert):
             return f"Error inserting data: {errors}"
     except Exception as e:
         return f"Error inserting data: {str(e)}"
-
 
 def PROD_TABLE(table_id, table_ref, token):
     # 1. Run a SQL query as SELECT name1, name2 FROM 'table_id'
@@ -438,10 +468,7 @@ def PROD_TABLE(table_id, table_ref, token):
                      ELSE NULL
                     END AS AGE_COHORT,
                     GENDER,STATE_1 AS STATE
-                    FROM `{PROJECT_ID}.{DATASET_ID}.{table_id}`
-                    WHERE DATE_DIFF(CURRENT_DATE(), DATE(DATE_REPORTED), MONTH) <= 36 AND SUBSTRING(DAYS_PAST_DUE_HISTORY, 1, 3) IS NOT NULL AND CAST(REGEXP_EXTRACT(AMOUNT_OVERDUE_HISTORY, r'([^,]+)') AS FLOAT64) IS NOT NULL AND ACCOUNT_STATUS IN ('Active', 'Closed') 
-                    AND STATE_1 is not Null 
-                    AND CONTRIBUTOR_TYPE iN ('NBF', 'PRB');'''
+                    FROM `{PROJECT_ID}.{DATASET_ID}.{table_id}`;'''
         
         preprocess_table_id = 'PREPROCESS1_' + ''.join(token)
         #Create a reference to the preprocess1 table
@@ -1209,606 +1236,11 @@ def Python1(table_id, token):
 
     print(f'DataFrame saved to GCS: gs://{bucket_name}/{object_path}')
         
-    return    
-
-
-def Credit_Card_Model_Call(df_request_json):
-
-    df = df_request_json.copy()
-
-    # Function to convert year month (str) to total months (int)
-    def convert_to_months(duration_str):
-        pattern = r'(\d+)\s*yrs\s+(\d+)\s*mon'
-        match = re.match(pattern, duration_str, re.IGNORECASE)
-        if match:
-            years = int(match.group(1))
-            months = int(match.group(2))
-            total_months = years * 12 + months
-            return total_months
-        else:
-            return None
-
-    # Apply the function to the AVERAGE_ACCOUNT_AGE column
-    df['AVERAGE_ACCOUNT_AGE_IN_MONTHS'] = df['AVERAGE_ACCOUNT_AGE'].apply(lambda x: convert_to_months(x))
-
-    # Drop the column with the uniques credit report id 
-    df = df.drop(columns = ['CREDIT_REPORT_ID', 'OVERDUE_AMOUNT', 'AVERAGE_ACCOUNT_AGE'], axis = 1)
-
-    #print(df.columns)
-    print('Subh', df['ACCOUNT_TYPE_Credit Card'])
-
-    # Keep the rows where a customer has atleast one Credit Card
-    #if df[df['ACCOUNT_TYPE_Credit Card']] == 0:
-    #    pass
-    #else:
-    df = df[df['ACCOUNT_TYPE_Credit Card'] != 0]
-
-    #print("Mama:", df)
-
-    # Resetting index after some rows are deleted
-    df = df.reset_index(drop=True)
-
-    # Replace the str value Good by 1 and Bad by 0 for final modelling
-    df['ROOPYA_CUSTOMER_STATUS'] = df['ROOPYA_CUSTOMER_STATUS'].replace({'Bad': 0, 'Good': 1})
-
-
-    median_value = df['AGE_COHORT'].median()
-
-    # Replace null values with the median value
-    df['AGE_COHORT'].fillna(median_value, inplace=True)
-
-    # Columns to scalling and replacing outliers
-    columns_to_deal = ['ACCOUNT_TYPE_Auto_Loan', 'ACCOUNT_TYPE_Credit Card', 'ACCOUNT_TYPE_Home_Loan', 'ACCOUNT_TYPE_Personal_Loan', 'PRIMARY_NO_OF_ACCOUNTS', 'PRIMARY_ACTIVE_ACCOUNTS', 'PRIMARY_OVERDUE_ACCOUNTS', 'PRIMARY_CURRENT_BALANCE', 'PRIMARY_SANCTIONED_AMOUNT', 'PRIMARY_DISTRIBUTED_AMOUNT', 'PRIMARY_INSTALLMENT_AMOUNT', 'NEW_ACCOUNTS_IN_LAST_SIX_MONTHS', 'NO_OF_INQUIRIES', 'Active_CURRENT_BALANCE', 'Active_OVERDUE_AMOUNT',  'INCOME', 'CONTRIBUTOR_TYPE_NBF', 'CONTRIBUTOR_TYPE_PRB', 'OWNERSHIP_IND_Guarantor', 'OWNERSHIP_IND_Individual', 'OWNERSHIP_IND_Joint', 'OWNERSHIP_IND_Supl_Card_Holder', 'ACCOUNT_STATUS_Active', 'ACCOUNT_STATUS_Closed', 'AVERAGE_ACCOUNT_AGE_IN_MONTHS']
-
-
-    df1 = df.drop(["ROOPYA_CUSTOMER_STATUS", "STATE"], axis = 1)
-
-    scaler = StandardScaler()
-
-    # Fit the scaler on your DataFrame (computes mean and standard deviation)
-    #scaler.fit(df1)
-
-    # Transform your DataFrame to apply standard scaling
-    #scaled_df = pd.DataFrame(scaler.transform(df1), columns = df1.columns)
-
-    #sc_df = df.copy()
-    #sl_df = scaled_df.copy()
-
-    print('Scaled data initiation')
-
-
-    #df_1 = df1
-    #df_2 = df['AGE_COHORT']
-    df_3 = df['ROOPYA_CUSTOMER_STATUS']
-    #df_4 = result_df.drop('AGE_COHORT', axis = 1)
-
-    # Reseting index for concatinating 
-    df_1 = df1.reset_index()
-    #df_3 = df_3.reset_index()
-    #df_4 = df_4.reset_index()
-
-    print('df1',df1.head())
-    print('df1 columns:',df1.columns)
-    #Concatination
-    sg_df1 = pd.concat([df_1, df_3], axis = 1)
-    #sg_df = pd.concat([sg_df1, df_3], axis = 1)
-    sg_df = sg_df1.drop(columns = 'index', axis = 1)
-
-    label_encoder = preprocessing.LabelEncoder()
-  
-    # Encode labels in column 'species'.
-    sg_df['AGE_COHORT']= label_encoder.fit_transform(sg_df['AGE_COHORT'])
-
-    X = sg_df.drop(columns = ['PRIMARY_SANCTIONED_AMOUNT', 'CURRENT_BALANCE', 'ROOPYA_CUSTOMER_STATUS'], axis = 1)
-
-    df12 = X
-
-    base_filename_X = 'CREDIT_CARD_Independent variable data'
-    object_path_X = f'Swarnavo/Pipeline/{base_filename_X}_{token}.csv'
-    csv_data_df12 = df12.to_csv(index=False)
-    bucket = storage_client.get_bucket(bucket_name)
-
-    # Create a GCS Blob and upload the CSV data
-    blob = bucket.blob(object_path_X)
-    blob.upload_from_string(csv_data_df12, content_type='text/csv')
-
-    print(f'Independent variable data DataFrame saved to GCS: gs://{base_filename_X}/{object_path_X}')
-
-    print('Independent variable data uploaded sucessfully')
-
-    #print("X", X.head())
-    #print(X)
-
-    print("Model level Data Preprocessing successful")
-
-    def call_endpoint(X):
-
-        payload = X.to_json(orient='records')
-
-        #print(X.head())
-
-        base_filename_json = 'Payload'
-        object_path_json = f'Swarnavo/Pipeline/{base_filename_json}_{token}.json'
-        json_data = X.to_json(orient='records') 
-        bucket = storage_client.get_bucket(bucket_name)
-
-        blob = bucket.blob(object_path_json)
-        blob.upload_from_string(json_data, content_type='application/json')
-
-        print('Payload uploaded sucessfully')
-
-        #print(payload[0])
-        # Iterate through the list and print values as lists for dictionaries
-        '''
-        vl = []
-        for item in payload:
-            if isinstance(item, dict):
-                values_list = list(item.values())
-                vl.append(values_list)
-
-        print(vl)
-        '''
-        dic = {}
-        vl = []
-        values_list = []
-
-        '''
-        for item in payload:
-            if isinstance(item, dict):
-                values_list = list(item.values())
-                vl.append(values_list)
-        print(values_list)
-        print('vl:', vl)
-        '''
-        # key = "\"instances\""
-        # value = X.values.tolist()
-        # result = {key: value}
-
-        dic["instances"] = X.values.tolist()
-        json_request = json.dumps(dic)
-        print(json_request)
-        #data = X.values.tolist()
-        #print(data)
-
-        #print(result)
-        #print(instances_data)
-        print('*******************************************')
-
-        creds, project = google.auth.default()
-
-        # creds.valid is False, and creds.token is None
-        # Need to refresh credentials to populate those
-
-        auth_req = google.auth.transport.requests.Request()
-        creds.refresh(auth_req)
-        
-        print(creds.token)
-
-
-        #print('Payload:',payload)
-        API_URL = 'https://asia-south1-aiplatform.googleapis.com/v1/projects/303650502197/locations/asia-south1/endpoints/384433245535600640:predict'
-        headers = {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + creds.token}
-
-        try:
-            response = requests.post(API_URL, data=json_request, headers=headers)
-            
-            # Check for a successful response (HTTP status code 200)
-            if response.status_code == 200:
-                print("Request was successful")
-                print(response.json())  # Print the API response
-                prediction_data = response.json()
-                base_filename_prediction = 'CREDITCARD_Prediction'
-                object_path_prediction = f'Swarnavo/Pipeline/{base_filename_prediction}_{token}.json'
-                json_data = response.json() 
-                bucket = storage_client.get_bucket(bucket_name)
-
-                blob = bucket.blob(object_path_prediction)
-                blob.upload_from_string(json.dumps(prediction_data), content_type='application/json')
-
-                print('CREDITCARD_Prediction uploaded sucessfully')
-                print('Endpoint hitted succesfully')
-
-                prediction_str = f"The prediction is: {json.dumps(prediction_data)}"
-
-                return prediction_str
-            else:
-                print(f"Request failed with status code: {response.status_code}")
-                print(response.text)  # Print the response content for debugging
-        except Exception as e:
-            print(f"An error occurred: {str(e)}")
-
-            return
-
-    call_endpoint(X)
-
-    return
-
-def Home_Loan_Model_Call(df_request_json):
-
-    df = df_request_json.copy()
-
-    dh = df[df['ACCOUNT_TYPE_Home Loan'] != 0]
-
-    pd.options.mode.chained_assignment = None
-
-    dh['AGE_COHORT'].fillna(dh['AGE_COHORT'].mean(), inplace=True)
-
-    def convert_to_months(age_str):
-        years, months = age_str.split(' ')
-        total_months = int(years.strip('yrs')) * 12 + int(months.strip('mon'))
-        return total_months
-
-    dh['AVERAGE_ACCOUNT_AGE'] = dh['AVERAGE_ACCOUNT_AGE'].apply(convert_to_months)
-
-    dh['ROOPYA_CUSTOMER_STATUS'] = dh['ROOPYA_CUSTOMER_STATUS'].map({'Good': 1, 'Bad': 0})
-
-    WOE_dictionary = {
-    'MH': -0.0415749986799236,
-    'GJ': -0.2235031497688723,
-    'WB': 0.2653150732625036,
-    'MP': 0.5279443172982753,
-    'DL': 0.10395221601077305,
-    'AP': -0.12429389809857178,
-    'KA': -0.17172343578496133,
-    'CG': 0.6171177248656481,
-    'PB': 0.254228916136814,
-    'UP': -0.049344816103512115,
-    'CH': -0.5735800293391802,
-    'HR': -0.3569758233039565,
-    'TN': 0.13989460862033512,
-    'KL': 0.2389299660366667,
-    'RJ': 0.24910008388707733,
-    'UK': 0.29293131332384853,
-    'BR': 0.0977083574082658,
-    'JH': 0.16798905907964595,
-    'HP': 0.25125861692328033,
-    'GA': -0.15886416145886503,
-    'OR': 0.12510733159638007,
-    'AS': 0.4008946163960121,
-    'ML': 0.4252119240467184,
-    'JK': 1.3526759565189987,
-    'PY': 0.24289036725276353,
-    'DN': -0.32620416463720275,
-    'AN': 2.197168765978594,
-    'DD': 0.8256894906438438,
-    'MN': 1.9858596723113868,
-    'SK': 1.8249293054987494,
-    'AR': 2.3223319089325996,
-    'TR': 1.1802345083247512,
-    'NL': 1.939339656676494,
-    'MZ': 3.2386226408067547,
-    'LD': 3.644087748914919
-    }
-    dh['STATE'] = dh['STATE'].map(WOE_dictionary)
-
-    X = dh.drop(columns=['CREDIT_REPORT_ID', 'ROOPYA_CUSTOMER_STATUS'])
-    X.fillna(0, inplace=True)
-    df12 = X
-
-    base_filename_X = 'HOME_LOAN_Independent variable data'
-    object_path_X = f'Swarnavo/Pipeline/{base_filename_X}_{token}.csv'
-    csv_data_df12 = df12.to_csv(index=False)
-    bucket = storage_client.get_bucket(bucket_name)
-
-    blob = bucket.blob(object_path_X)
-    blob.upload_from_string(csv_data_df12, content_type='text/csv')
-
-    print(f'HOME_LOAN_Independent variable data DataFrame saved to GCS: gs://{base_filename_X}/{object_path_X}')
-
-    print('HOME_LOAN_Independent variable data uploaded sucessfully')
-
-    print("Model level Data Preprocessing successful")
-
-    def call_endpoint(X):
-
-        payload = X.to_json(orient='records')
-
-        #print(X.head())
-
-        base_filename_json = 'Payload'
-        object_path_json = f'Swarnavo/Pipeline/{base_filename_json}_{token}.json'
-        json_data = X.to_json(orient='records') 
-        bucket = storage_client.get_bucket(bucket_name)
-
-        blob = bucket.blob(object_path_json)
-        blob.upload_from_string(json_data, content_type='application/json')
-
-        print('Payload uploaded sucessfully')
-
-        #print(payload[0])
-        # Iterate through the list and print values as lists for dictionaries
-        '''
-        vl = []
-        for item in payload:
-            if isinstance(item, dict):
-                values_list = list(item.values())
-                vl.append(values_list)
-
-        print(vl)
-        '''
-        dic = {}
-        vl = []
-        values_list = []
-
-        '''
-        for item in payload:
-            if isinstance(item, dict):
-                values_list = list(item.values())
-                vl.append(values_list)
-        print(values_list)
-        print('vl:', vl)
-        '''
-        # key = "\"instances\""
-        # value = X.values.tolist()
-        # result = {key: value}
-
-        dic["instances"] = X.values.tolist()
-        json_request = json.dumps(dic)
-        print(json_request)
-        #data = X.values.tolist()
-        #print(data)
-
-        #print(result)
-        #print(instances_data)
-        print('*******************************************')
-
-        creds, project = google.auth.default()
-
-        # creds.valid is False, and creds.token is None
-        # Need to refresh credentials to populate those
-
-        auth_req = google.auth.transport.requests.Request()
-        creds.refresh(auth_req)
-        
-        print(creds.token)
-
-
-        #print('Payload:',payload)
-        API_URL = 'https://asia-south1-aiplatform.googleapis.com/v1/projects/303650502197/locations/asia-south1/endpoints/909771105193951232:predict'
-        headers = {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + creds.token}
-
-        try:
-            response = requests.post(API_URL, data=json_request, headers=headers)
-            
-            # Check for a successful response (HTTP status code 200)
-            if response.status_code == 200:
-                print("Request was successful")
-                print(response.json())  # Print the API response
-                prediction_data = response.json()
-                base_filename_prediction = 'HOMELOAN_Prediction'
-                object_path_prediction = f'Swarnavo/Pipeline/{base_filename_prediction}_{token}.json'
-                json_data = response.json() 
-                bucket = storage_client.get_bucket(bucket_name)
-
-                blob = bucket.blob(object_path_prediction)
-                blob.upload_from_string(json.dumps(prediction_data), content_type='application/json')
-
-                print('Prediction uploaded sucessfully')
-                print('Endpoint hitted succesfully')
-
-                prediction_str = f"The prediction is: {json.dumps(prediction_data)}"
-
-                return prediction_str
-            else:
-                print(f"Request failed with status code: {response.status_code}")
-                print(response.text)  # Print the response content for debugging
-        except Exception as e:
-            print(f"An error occurred: {str(e)}")
-
-            return
-
-    call_endpoint(X)
-
-    return
-
-def Auto_Loan_Model_Call(df_request_json):
-        df = df_request_json.copy()
-        df = df[df['ACCOUNT_TYPE_Auto Loan'] != 0]
-        df = df.reset_index(drop=True)
-        #To avoid warnings
-        pd.options.mode.chained_assignment = None
-
-        def convert_to_months(row):
-            parts = row.split()
-            years = int(parts[0].replace('yrs', ''))
-            months = int(parts[1].replace('mon', ''))
-            return years * 12 + months
-        # Apply the conversion function to the AVERAGE_ACCOUNT_AGE column
-        df['AVERAGE_ACCOUNT_AGE'] = df['AVERAGE_ACCOUNT_AGE'].apply(convert_to_months)
-
-
-        df['ROOPYA_CUSTOMER_STATUS'] = df['ROOPYA_CUSTOMER_STATUS'].replace({'Bad': 0, 'Good': 1})
-
-        # Calculate the median of the column
-        median_value = df['AGE_COHORT'].median()
-
-        # Replace null values with the median value
-        df['AGE_COHORT'].fillna(median_value, inplace=True)
-
-        scaled_df = df.copy()
-        df1 = scaled_df.copy()
-        df1 = df1.drop(columns = ['PRIMARY_SANCTIONED_AMOUNT'])
-
-        age_cohort_woe_dict = {
-            "35": -0.3905364804545106,
-            "30": -0.36219831191514384,
-            "25": -0.2171104131074959,
-            "45": 0.12074231523923198,
-            "20": 0.14411881816993755,
-            "40": 0.16749532110064314,
-            "55": 0.27469090614210345,
-            "50": 0.2803672614742691,
-            "60": 0.3418813664167584
-        }
-
-        df1['AGE_COHORT'] = df1['AGE_COHORT'].map(age_cohort_woe_dict)
-
-        state_woe_dict = {
-            "MZ ": -1.1668437519521144,
-            "AN ": -0.8278683851127832,
-            "JK ": -0.6796586628256918,
-            "MN ": -0.6300426417828636,
-            "HP ": -0.5559346696291413,
-            "BR ": -0.48388474729235936,
-            "CG ": -0.461775900429858,
-            "OR ": -0.4463234607222707,
-            "TR ": -0.40260064970843906,
-            "AR ": -0.35786475586704786,
-            "PY ": -0.2923501487564197,
-            "JH ": -0.20486681391959594,
-            "AS ": -0.14099081756643347,
-            "MP ": -0.12060561364555582,
-            "AP ": -0.11294232887402875,
-            "WB ": -0.1084064092055317,
-            "UP ": -0.10172485086397329,
-            "NL ": -0.10172485086397329,
-            "UK ": -0.0867619502774938,
-            "TN ": -0.08466238034095747,
-            "RJ ": -0.07166546322458317,
-            "PB ": -0.004058506032794042,
-            "GA ": 0.05825764671510376,
-            "MH ": 0.07837201090787037,
-            "GJ ": 0.14960922081437553,
-            "KA ": 0.15818002637915088,
-            "HR ": 0.17656804948539692,
-            "DL ": 0.24387293322349538,
-            "KL ": 0.24516172015641127,
-            "SK ": 0.24542609557103615,
-            "CH ": 0.29543651614569694,
-            "DD ": 0.38852693921171083,
-            "DN ": 1.4570617726425428,
-            "ML ": 1.4722135776631413
-        }
-
-        df1['STATE'] = df1['STATE'].map(state_woe_dict)
-
-        X = df1.drop(columns=['CREDIT_REPORT_ID', 'ROOPYA_CUSTOMER_STATUS'])
-        X.fillna(0, inplace=True)
-        df12 = X
-
-        base_filename_X = 'AUTO_LOAN_Independent variable data'
-        object_path_X = f'Swarnavo/Pipeline/{base_filename_X}_{token}.csv'
-        csv_data_df12 = df12.to_csv(index=False)
-        bucket = storage_client.get_bucket(bucket_name)
-
-        blob = bucket.blob(object_path_X)
-        blob.upload_from_string(csv_data_df12, content_type='text/csv')
-
-        print(f'AUTO_LOAN_Independent variable data DataFrame saved to GCS: gs://{base_filename_X}/{object_path_X}')
-
-        print('AUTO_LOAN_Independent variable data uploaded sucessfully')
-
-        print("Model level Data Preprocessing successful")
-
-        def call_endpoint(X):
-
-            payload = X.to_json(orient='records')
-
-            #print(X.head())
-
-            base_filename_json = 'AutoLoan_Payload'
-            object_path_json = f'Swarnavo/Pipeline/{base_filename_json}_{token}.json'
-            json_data = X.to_json(orient='records') 
-            bucket = storage_client.get_bucket(bucket_name)
-
-            blob = bucket.blob(object_path_json)
-            blob.upload_from_string(json_data, content_type='application/json')
-
-            print('Payload uploaded sucessfully')
-
-            #print(payload[0])
-            # Iterate through the list and print values as lists for dictionaries
-            '''
-            vl = []
-            for item in payload:
-                if isinstance(item, dict):
-                    values_list = list(item.values())
-                    vl.append(values_list)
-
-            print(vl)
-            '''
-            dic = {}
-            vl = []
-            values_list = []
-
-            '''
-            for item in payload:
-                if isinstance(item, dict):
-                    values_list = list(item.values())
-                    vl.append(values_list)
-            print(values_list)
-            print('vl:', vl)
-            '''
-            # key = "\"instances\""
-            # value = X.values.tolist()
-            # result = {key: value}
-
-            dic["instances"] = X.values.tolist()
-            json_request = json.dumps(dic)
-            print(json_request)
-            #data = X.values.tolist()
-            #print(data)
-
-            #print(result)
-            #print(instances_data)
-            print('*******************************************')
-
-            creds, project = google.auth.default()
-
-            # creds.valid is False, and creds.token is None
-            # Need to refresh credentials to populate those
-
-            auth_req = google.auth.transport.requests.Request()
-            creds.refresh(auth_req)
-            
-            print(creds.token)
-
-
-            #print('Payload:',payload)
-            API_URL = 'https://asia-south1-aiplatform.googleapis.com/v1/projects/303650502197/locations/asia-south1/endpoints/3288692055236149248:predict'
-            headers = {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + creds.token}
-
-            try:
-                response = requests.post(API_URL, data=json_request, headers=headers)
-                
-                # Check for a successful response (HTTP status code 200)
-                if response.status_code == 200:
-                    print("Request was successful")
-                    print(response.json())  # Print the API response
-                    prediction_data = response.json()
-                    base_filename_prediction = 'AUTOLOAN_Prediction'
-                    object_path_prediction = f'Swarnavo/Pipeline/{base_filename_prediction}_{token}.json'
-                    json_data = response.json() 
-                    bucket = storage_client.get_bucket(bucket_name)
-
-                    blob = bucket.blob(object_path_prediction)
-                    blob.upload_from_string(json.dumps(prediction_data), content_type='application/json')
-
-                    print('Prediction uploaded sucessfully')
-                    print('Endpoint hitted succesfully')
-
-                    prediction_str = f"The prediction is: '{json.dumps(prediction_data)}'"
-
-                    return prediction_str
-                else:
-                    print(f"Request failed with status code: {response.status_code}")
-                    print(response.text)  # Print the response content for debugging
-            except Exception as e:
-                print(f"An error occurred: {str(e)}")
-
-                return
-
-        call_endpoint(X)
-
-        return
-
-
-
-
-
+    return   
 
 @functions_framework.http
 def save_to_bigquery(request):
+    gc.collect()
     request_json = request.get_json(silent=True)
 
     if request_json and isinstance(request_json, list) and len(request_json) == 1:
@@ -2069,45 +1501,48 @@ def save_to_bigquery(request):
             Credit_Card_return = ''
             Home_Loan_return = ''
             Auto_Loan_return = ''
-
-            object_path_CC = f'Swarnavo/Pipeline/CREDITCARD_Prediction_{token}.csv'
-            object_path_HL = f'Swarnavo/Pipeline/HOMELOAN_Prediction_{token}.csv'
+            Personal_Loan_return = ''
+            object_path_CC = f'Swarnavo/Pipeline/CREDITCARD_Prediction_{token}.json'
+            object_path_HL = f'Swarnavo/Pipeline/HOMELOAN_Prediction_{token}.json'
             object_path_AL = f'Swarnavo/Pipeline/AUTOLOAN_Prediction_{token}.json'
-
+            object_path_PL = f'Swarnavo/Pipeline/PERSONALLOAN_Prediction_{token}.json'
 
             if (df_product['Product'] == 'Credit Card').any():
                 filtered_rows = df_product[df_product['Product'] == 'Credit Card']
                 for index, row in filtered_rows.iterrows():
-                    Credit_Card_return = Credit_Card_Model_Call(df_request_json)
-                    return f"Your token is: '{token}', Table deleated as: '{preprocess_table_id_2}' from BigQuery and prediction is saved in GCS: gs://{bucket_name}/{object_path_CC}."
-                    #return f"Your token id is: '{token}', Credit_Card_return"
-            
+                    Credit_Card_return = Credit_Card_Model_Call(df_request_json, token)
+                    delete_common_preprocessing()
+                    delete_product_file()
+                return f'Your token is: {token}, Table deleted as: {preprocess_table_id_3} from BigQuery and prediction is saved in GCS: gs://{bucket_name}/{object_path_CC}.', 200
+
             if (df_product['Product'] == 'Home Loan').any():
                 filtered_rows = df_product[df_product['Product'] == 'Home Loan']
                 for index, row in filtered_rows.iterrows():
-                    Home_Loan_return = Home_Loan_Model_Call(df_request_json)
-                    return f"Your token is: '{token}', Table deleated as: '{preprocess_table_id_2}' from BigQuery and prediction is saved in GCS: gs://{bucket_name}/{object_path_HL}."
-                    #return f"Your token id is: '{token}', Home_Loan_return"
-            
+                    Home_Loan_return = Home_Loan_Model_Call(df_request_json, token)
+                    delete_common_preprocessing()
+                    delete_product_file()
+                return f'Your token is: {token}, File deleated as: {preprocess_table_id_3} & {df_product} from Storage and prediction is saved in GCS: gs://{bucket_name}/{object_path_HL}.', 200
+                
             if (df_product['Product'] == 'Auto Loan').any():
                 filtered_rows = df_product[df_product['Product'] == 'Auto Loan']
                 for index, row in filtered_rows.iterrows():
-                    Auto_Loan_return = Auto_Loan_Model_Call(df_request_json)
-                    return f"Your token is: '{token}', Table deleated as: '{preprocess_table_id_2}' from BigQuery and prediction is saved in GCS: gs://{bucket_name}/{object_path_AL}."
-                    #return_dict = {'Auto_Loan_return' : Auto_Loan_return, 'token' : token}
-                    #return f"'{return_dict}'"
-
-            #Credit_Card_Model_Call(df_request_json)
-            
-            #Home_Loan_Model_Call(df_request_json)
+                    Auto_Loan_return = Auto_Loan_Model_Call(df_request_json, token)
+                    delete_common_preprocessing()
+                    delete_product_file()
+                return f'Your token is: {token}, File deleated as: {preprocess_table_id_3} & {df_product} from Storage and prediction is saved in GCS: gs://{bucket_name}/{object_path_AL}.', 200
 
 
+            if (df_product['Product'] == 'Personal Loan').any():
+                filtered_rows = df_product[df_product['Product'] == 'Personal Loan']
+                for index, row in filtered_rows.iterrows():
+                    Personal_Loan_return = Personal_Loan_Model_Call(df_request_json, token)
+                    delete_common_preprocessing()
+                    delete_product_file()
+                return f'Your token is: {token}, File deleated as: {preprocess_table_id_3} & {df_product} from Storage and prediction is saved in GCS: gs://{bucket_name}/{object_path_PL}.' , 200
             
-            
-            #return f"All BigQuery steps are successful, Table deleated as: '{preprocess_table_id_2}'."
-            return f"Your token is: '{token}', Table deleated as: '{preprocess_table_id_2}' from BigQuery and prediction is saved in '{bucket_name}/Swarnavo'." #and Preprocessed python DataFrame saved to GCS: gs://{bucket_name}/{object_path}."
+            return f'Your token is: {token}, Table deleted as: {preprocess_table_id_2} from BigQuery and prediction is saved in {bucket_name}/Swarnavo.', 200
 
         else:
-            return "No valid data to insert."
+            return f'No valid data to insert.', 400
     else:
-        return "Invalid input format or no data to process."
+        return f'Invalid input format or no data to process.', 400
