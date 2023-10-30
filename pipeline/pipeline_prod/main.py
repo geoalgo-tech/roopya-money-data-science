@@ -3,9 +3,25 @@ import json
 import string
 import random
 import re
+import io
 from google.cloud import bigquery
 import pandas as pd
 from google.cloud import storage
+import numpy as np
+from scipy.stats.mstats import winsorize
+from sklearn.preprocessing import StandardScaler
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn import preprocessing
+from flask import request, Response
+import google.auth
+import google.auth.transport.requests
+import gc
+from Credit_Card_Model_Call import Credit_Card_Model_Call
+from Home_Loan_Model_Call import Home_Loan_Model_Call
+from Auto_Loan_Model_Call import Auto_Loan_Model_Call
+from Personal_Loan_Model_Call import Personal_Loan_Model_Call
+
 
 
 def token_gen():
@@ -27,8 +43,12 @@ bucket_name = 'roopya_analytics_workarea'
 base_filename = 'PYTHON_PREPROCESS1'
 #token = random.choices(string.ascii_letters, k=12)
 object_path = f'Swarnavo/Pipeline/{base_filename}_{token}.csv'
-base_filename = 'PYTHON_PREPROCESS1'
+#base_filename = 'PYTHON_PREPROCESS1'
 base_filename_product = 'PRODUCT'
+object_path_product = f'Swarnavo/Pipeline/{base_filename_product}_{token}.csv'
+
+
+
 
 # Define the schema for the BigQuery table
 #Input Schema
@@ -317,6 +337,36 @@ client = bigquery.Client(project=PROJECT_ID, location=LOCATION)
 storage_client = storage.Client(project=PROJECT_ID)
 
 
+def delete_common_preprocessing():
+    file_name = f'Swarnavo/Pipeline/{base_filename}_{token}.csv'
+    bucket = storage_client.get_bucket(bucket_name)
+
+    # Specify the blob (file) to delete
+    blob = bucket.blob(file_name)
+
+    try:
+        # Delete the blob (file)
+        blob.delete()
+        return f'Successfully deleted {file_name} from {bucket_name}'
+    except Exception as e:
+        return f'Error deleting {file_name}: {str(e)}'
+    
+
+def delete_product_file():
+    file_name = f'Swarnavo/Pipeline/{base_filename_product}_{token}.csv'
+    bucket = storage_client.get_bucket(bucket_name)
+
+    # Specify the blob (file) to delete
+    blob = bucket.blob(file_name)
+
+    try:
+        # Delete the blob (file)
+        blob.delete()
+        return f'Successfully deleted {file_name} from {bucket_name}'
+    except Exception as e:
+        return f'Error deleting {file_name}: {str(e)}'
+
+
 def insert_rows_into_bigquery(table_ref, rows_to_insert):
     try:
         # Explicitly specify the schema when inserting rows
@@ -327,7 +377,6 @@ def insert_rows_into_bigquery(table_ref, rows_to_insert):
             return f"Error inserting data: {errors}"
     except Exception as e:
         return f"Error inserting data: {str(e)}"
-
 
 def PROD_TABLE(table_id, table_ref, token):
     # 1. Run a SQL query as SELECT name1, name2 FROM 'table_id'
@@ -419,10 +468,7 @@ def PROD_TABLE(table_id, table_ref, token):
                      ELSE NULL
                     END AS AGE_COHORT,
                     GENDER,STATE_1 AS STATE
-                    FROM `{PROJECT_ID}.{DATASET_ID}.{table_id}`
-                    WHERE DATE_DIFF(CURRENT_DATE(), DATE(DATE_REPORTED), MONTH) <= 36 AND SUBSTRING(DAYS_PAST_DUE_HISTORY, 1, 3) IS NOT NULL AND CAST(REGEXP_EXTRACT(AMOUNT_OVERDUE_HISTORY, r'([^,]+)') AS FLOAT64) IS NOT NULL AND ACCOUNT_STATUS IN ('Active', 'Closed') 
-                    AND STATE_1 is not Null 
-                    AND CONTRIBUTOR_TYPE iN ('NBF', 'PRB');'''
+                    FROM `{PROJECT_ID}.{DATASET_ID}.{table_id}`;'''
         
         preprocess_table_id = 'PREPROCESS1_' + ''.join(token)
         #Create a reference to the preprocess1 table
@@ -842,10 +888,10 @@ def Python1(table_id, token):
     #Cell 1
     query =  f'''SELECT * FROM `{PROJECT_ID}.{DATASET_ID}.{table_id}`;'''
     # Run the query
-    print(PROJECT_ID)
-    print(DATASET_ID)
-    print(table_id)
-    print(query)
+    #print(PROJECT_ID)
+    #print(DATASET_ID)
+    #print(table_id)
+    #print(query)
     query_job = client.query(query)
     results = query_job.result()
     #Mama
@@ -954,6 +1000,9 @@ def Python1(table_id, token):
 
     df.columns[df.isnull().any()]
 
+    #print(df)
+    #print(df['ACCOUNT_TYPE'])
+
     # Define loan categories
     loan_categories = {
         'Credit Card': 'Credit Card', 'Loan on Credit Card': 'Credit Card', 'Secured Credit Card': 'Credit Card',
@@ -967,8 +1016,12 @@ def Python1(table_id, token):
         'Microfinance Housing Loan': 'Home Loan'
     }
 
+
     # Map the loan categories to the 'ACCOUNT_TYPE' column
     df['Loan Category'] = df['ACCOUNT_TYPE'].map(loan_categories)
+    #print("df after loan", df.columns)
+    #print("df loan categories", df['Loan Category'])
+    print(df[['ACCOUNT_TYPE', 'Loan Category']])
 
     # Pivot the DataFrame to create separate columns for each loan category
     acc_df = df.pivot_table(index='CREDIT_REPORT_ID', columns='Loan Category', aggfunc= 'size', fill_value=0)
@@ -976,10 +1029,41 @@ def Python1(table_id, token):
     # Reset the index to make 'CREDIT_REPORT_ID' a column again
     acc_df.reset_index(inplace=True)
 
+
+    print("Account df",acc_df)
+    
+    if 'Credit Card' not in acc_df.columns:
+        acc_df['Credit Card'] = 0
+    else:
+        pass
+    
+    if 'Home Loan' not in acc_df.columns:
+        acc_df['Home Loan'] = 0
+    else:
+        pass
+    
+    if 'Auto Loan' not in acc_df.columns:
+        acc_df['Auto Loan'] = 0
+    else:
+        pass    
+    
+    if 'Personal Loan' not in acc_df.columns:
+        acc_df['Personal Loan'] = 0
+    else:
+        pass
+    
+    print("Account df new",acc_df)
+    print('###############################################################################')
+    
+
     # Rename columns for better readability
     acc_df.rename(columns={'Credit Card': 'ACCOUNT_TYPE_Credit Card', 'Home loan': 'ACCOUNT_TYPE_Home Loan', 'Auto Loan': 'ACCOUNT_TYPE_Auto Loan', 'Personal Loan': 'ACCOUNT_TYPE_Personal Loan'}, inplace=True)
 
+
+
     merged_df = acc_df.merge(df, on="CREDIT_REPORT_ID", how="left")
+
+    #print("Merged df",merged_df.columns)
 
     merged_df["CREDIT_REPORT_ID"].duplicated().sum()
 
@@ -993,6 +1077,17 @@ def Python1(table_id, token):
     # Reset index to have 'CREDIT_REPORT_ID' as a regular column
     ct_df.reset_index(inplace=True)
 
+    if 'PRB' not in ct_df.columns:
+        ct_df['PRB'] = 0
+    else:
+        pass
+
+    if 'NBF' not in ct_df.columns:
+        ct_df['NBF'] = 0
+    else:
+        pass    
+
+
     # Rename columns for better readability
     ct_df.rename(columns={'PRB': 'CONTRIBUTOR_TYPE_PRB', 'NBF': 'CONTRIBUTOR_TYPE_NBF'}, inplace=True)
 
@@ -1000,6 +1095,26 @@ def Python1(table_id, token):
 
     # Pivot OWNERSHIP_IND data
     oi_df = df.pivot_table(index = 'CREDIT_REPORT_ID', columns = 'OWNERSHIP_IND', aggfunc = 'size', fill_value = 0)
+
+    if 'Individual' not in oi_df.columns:
+        oi_df['Individual'] = 0
+    else:
+        pass
+
+    if 'Supl Card Holder' not in oi_df.columns:
+        oi_df['Supl Card Holder'] = 0
+    else:
+        pass
+
+    if 'Joint' not in oi_df.columns:
+        oi_df['Joint'] = 0
+    else:
+        pass
+
+    if 'Guarantor' not in oi_df.columns:
+        oi_df['Guarantor'] = 0
+    else:
+        pass
 
     # Reset index to have 'CREDIT_REPORT_ID' as a regular column
     oi_df.reset_index(inplace=True)
@@ -1015,6 +1130,17 @@ def Python1(table_id, token):
     # Reset index and remove the name of the columns index
     as_df.reset_index(inplace=True)
 
+    if 'Active' not in as_df.columns:
+        as_df['Active'] = 0
+    else:
+        pass
+
+    if 'Closed' not in as_df.columns:
+        as_df['Closed'] = 0
+    else:
+        pass
+    
+
     # Rename columns for better readability
     as_df.rename(columns={'Active': 'ACCOUNT_STATUS_Active', 'Closed': 'ACCOUNT_STATUS_Closed'}, inplace=True)
 
@@ -1023,7 +1149,7 @@ def Python1(table_id, token):
     agg_data = df[['CREDIT_REPORT_ID', 'ACCOUNT_STATUS', 'CURRENT_BALANCE', 'OVERDUE_AMOUNT']]
     df_dummy = pd.DataFrame({'CREDIT_REPORT_ID': ['RoopyaDummy', 'RoopyaDummy'], 'ACCOUNT_STATUS': ['Active', 'Closed'], 'CURRENT_BALANCE': [0,0], 'OVERDUE_AMOUNT': [0,0]})
     agg_data = pd.concat([agg_data, df_dummy])
-    print(agg_data)
+    #print(agg_data)
 
     def aggregation(df):
         # Create a pivot table to aggregate balances and overdue amounts
@@ -1037,7 +1163,7 @@ def Python1(table_id, token):
         
         # Reset the index to make 'CREDIT_REPORT_ID' a regular column
         pivot_df.reset_index(inplace=True)
-        print("pivot_df",pivot_df.columns)
+        #print("pivot_df",pivot_df.columns)
         
         return pivot_df
 
@@ -1051,7 +1177,7 @@ def Python1(table_id, token):
     merged3_df["ROOPYA_ACCOUNT_STATUS"].value_counts()
 
     cri_df = merged3_df[['CREDIT_REPORT_ID', 'ROOPYA_ACCOUNT_STATUS']]
-    print("cri_df",cri_df.columns)
+    #print("cri_df",cri_df.columns)
 
     # Custom function to determine the final status
     def categorize_customer(group):
@@ -1065,10 +1191,10 @@ def Python1(table_id, token):
             return 'Good'
 
     result = cri_df.groupby('CREDIT_REPORT_ID').apply(categorize_customer)
-
+    print('result', result)
     # Create a new DataFrame with the summarized results
     final_status_df = result.reset_index(name='ROOPYA_CUSTOMER_STATUS')
-    print("Final_status_df",final_status_df.columns)
+    #print("Final_status_df",final_status_df.columns)
 
     df_1 = merged3_df.drop(columns = ['ACCOUNT_TYPE', 'CONTRIBUTOR_TYPE', 'OWNERSHIP_IND', 'ACCOUNT_STATUS','ROOPYA_ACCOUNT_STATUS', 'Loan Category'])
     df_2 = final_status_df.drop(columns = ['CREDIT_REPORT_ID'])
@@ -1099,7 +1225,8 @@ def Python1(table_id, token):
 
     df10 = df10.drop(columns = ['Closed_CURRENT_BALANCE', 'Closed_OVERDUE_AMOUNT'], axis = 1)
     df10 = df10[df10['CREDIT_REPORT_ID']!= 'RoopyaDummy']
-    print(df10)
+    print("Columns after preprocesssing:",df10.columns)
+
     csv_data = df10.to_csv(index=False)
     bucket = storage_client.get_bucket(bucket_name)
 
@@ -1109,12 +1236,11 @@ def Python1(table_id, token):
 
     print(f'DataFrame saved to GCS: gs://{bucket_name}/{object_path}')
         
-    return    
-
-
+    return   
 
 @functions_framework.http
 def save_to_bigquery(request):
+    gc.collect()
     request_json = request.get_json(silent=True)
 
     if request_json and isinstance(request_json, list) and len(request_json) == 1:
@@ -1354,11 +1480,69 @@ def save_to_bigquery(request):
             print("Successfully deleted: ", preprocess_table_id_2)
 
             print("----------------------------------------------------------------")
+
+            bucket = storage_client.get_bucket(bucket_name)
+            blob_product = bucket.blob(object_path_product)
+            data_product = blob_product.download_as_text()
+
+            df_product = pd.read_csv(io.StringIO(data_product))
             
-            #return f"All BigQuery steps are successful, Table deleated as: '{preprocess_table_id_2}'."
-            return f"All BigQuery steps are successful, Table deleated as: '{preprocess_table_id_2}' and Preprocessed python DataFrame saved to GCS: gs://{bucket_name}/{object_path}."
+            bucket = storage_client.get_bucket(bucket_name)
+            blob = bucket.blob(object_path)
+            data = blob.download_as_text()
+
+            # Read the CSV data into a DataFrame
+            df_request_json = pd.read_csv(io.StringIO(data))
+
+            print("Data Read Sucessfully")
+
+            print("df_request_json:", df_request_json.columns)
+
+            Credit_Card_return = ''
+            Home_Loan_return = ''
+            Auto_Loan_return = ''
+            Personal_Loan_return = ''
+            object_path_CC = f'Swarnavo/Pipeline/CREDITCARD_Prediction_{token}.json'
+            object_path_HL = f'Swarnavo/Pipeline/HOMELOAN_Prediction_{token}.json'
+            object_path_AL = f'Swarnavo/Pipeline/AUTOLOAN_Prediction_{token}.json'
+            object_path_PL = f'Swarnavo/Pipeline/PERSONALLOAN_Prediction_{token}.json'
+
+            if (df_product['Product'] == 'Credit Card').any():
+                filtered_rows = df_product[df_product['Product'] == 'Credit Card']
+                for index, row in filtered_rows.iterrows():
+                    Credit_Card_return = Credit_Card_Model_Call(df_request_json, token)
+                    delete_common_preprocessing()
+                    delete_product_file()
+                return f'Your token is: {token}, Table deleted as: {preprocess_table_id_3} from BigQuery and prediction is saved in GCS: gs://{bucket_name}/{object_path_CC}.', 200
+
+            if (df_product['Product'] == 'Home Loan').any():
+                filtered_rows = df_product[df_product['Product'] == 'Home Loan']
+                for index, row in filtered_rows.iterrows():
+                    Home_Loan_return = Home_Loan_Model_Call(df_request_json, token)
+                    delete_common_preprocessing()
+                    delete_product_file()
+                return f'Your token is: {token}, File deleated as: {preprocess_table_id_3} & {df_product} from Storage and prediction is saved in GCS: gs://{bucket_name}/{object_path_HL}.', 200
+                
+            if (df_product['Product'] == 'Auto Loan').any():
+                filtered_rows = df_product[df_product['Product'] == 'Auto Loan']
+                for index, row in filtered_rows.iterrows():
+                    Auto_Loan_return = Auto_Loan_Model_Call(df_request_json, token)
+                    delete_common_preprocessing()
+                    delete_product_file()
+                return f'Your token is: {token}, File deleated as: {preprocess_table_id_3} & {df_product} from Storage and prediction is saved in GCS: gs://{bucket_name}/{object_path_AL}.', 200
+
+
+            if (df_product['Product'] == 'Personal Loan').any():
+                filtered_rows = df_product[df_product['Product'] == 'Personal Loan']
+                for index, row in filtered_rows.iterrows():
+                    Personal_Loan_return = Personal_Loan_Model_Call(df_request_json, token)
+                    delete_common_preprocessing()
+                    delete_product_file()
+                return f'Your token is: {token}, File deleated as: {preprocess_table_id_3} & {df_product} from Storage and prediction is saved in GCS: gs://{bucket_name}/{object_path_PL}.' , 200
+            
+            return f'Your token is: {token}, Table deleted as: {preprocess_table_id_2} from BigQuery and prediction is saved in {bucket_name}/Swarnavo.', 200
 
         else:
-            return "No valid data to insert."
+            return f'No valid data to insert.', 400
     else:
-        return "Invalid input format or no data to process."
+        return f'Invalid input format or no data to process.', 400
