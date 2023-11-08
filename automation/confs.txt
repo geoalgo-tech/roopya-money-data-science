@@ -1,0 +1,8 @@
+key=value
+Product_Type=Home Loan
+DISBURSED_Date_start="2020-01-01"
+DISBURSED_Date_end="2022-10-31"
+DATE_DIFF_start=12
+DATE_DIFF_end=33
+Rolling_window=12
+Bucket=2
