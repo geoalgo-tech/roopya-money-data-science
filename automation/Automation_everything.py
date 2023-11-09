@@ -2,6 +2,7 @@ from google.cloud import bigquery
 import pandas as pd
 import numpy as np
 
+
 confs = {}
 Home_Loan = ['Housing Loan', 'Property Loan', 'Leasing', 'Microfinance Housing Loan']
 Credit_Loan = ['Credit Card', 'Loan on Credit Card', 'Secured Credit Card', 'Corporate Credit Card', 'Kisan Credit Card']
@@ -14,15 +15,7 @@ def get_confs():
     confs = dict(zip(conf_df['key'], conf_df['value']))
     return confs
 
-# def make_model_base_unique(df):
-#     df.sort_values(by=['CREDT_RPT_ID', 'DATE_REPORTED'], ascending=[False, False], inplace=True)
-#     unq_df = df.drop_duplicates(subset='CREDT_RPT_ID', keep='first')
-#     return unq_df
-
-def model_base_func():
-    global confs
-    get_confs()  # Call get_confs to update the global confs dictionary
-    client = bigquery.Client()
+def Loan_categories(confs):
     sub_types = ''
     if confs['Product_Type'] == 'Home Loan':
         for element in Home_Loan:
@@ -36,33 +29,49 @@ def model_base_func():
         for element in Personal_Loan:
             sub_types = sub_types + "'" + element + "'" + ','
         sub_types = sub_types[:len(sub_types) - 1]
-    else:
+    elif confs['Product_Type'] == 'Credit Card':
         for element in Credit_Loan:
             sub_types = sub_types + "'" + element + "'" + ','
         sub_types = sub_types[:len(sub_types) - 1]
+    else:
+        print('Not a valid information')
+    
+    return sub_types
+
+#sub_types = Loan_categories(confs)
+
+def model_base_func():
+    """
+        Calling query for defining model base data and saving it in a dataframe
+        Arguments: NA
+        Return: 1 dataframe
+    """
+    global confs
+    get_confs()  # Call get_confs to update the global confs dictionary
+    client = bigquery.Client()
+    sub_types = ''
+    sub_types = Loan_categories(confs)
 
     query = """
         SELECT * 
         FROM (
             SELECT *,
             ROW_NUMBER() OVER (PARTITION BY CREDT_RPT_ID ORDER BY DISBURSED_DT DESC) AS rn
-            FROM `geoalgo-208508.roopya_analytics_dw.v3_account`
+            FROM `{}`
             WHERE ACCT_TYPE IN ({})
             AND DISBURSED_DT BETWEEN DATE '{}' AND DATE '{}'
             AND DATE_DIFF(DATE_REPORTED, DISBURSED_DT, MONTH) BETWEEN {} AND {}
             AND OWNERSHIP_IND <> 'Guarantor'
         ) t
         WHERE t.rn = 1;
-        """.format(sub_types, confs['DISBURSED_Date_start'], confs['DISBURSED_Date_end'], confs['DATE_DIFF_start'], confs['DATE_DIFF_end'])
+        """.format(confs['Table'], sub_types, confs['DISBURSED_Date_start'], confs['DISBURSED_Date_end'], confs['DATE_DIFF_start'], confs['DATE_DIFF_end'])
 
-    # print(query)
+    #print(query)
 
     # Run the query
     query_job = client.query(query)
     results = query_job.result()
     df = results.to_dataframe()
-
-    # Calling the function to sort the values of Credit Report Id and Date Reported and also dropping the duplicates
 
     # df.to_csv('Model_Base.csv', index=False)
     return df
@@ -71,32 +80,21 @@ def model_base_func():
 model_base = model_base_func()
 print('Initiating Model Base function')
 model_base.to_csv('Model_Base_{}.csv'.format(confs['Product_Type']), index=False)
-print('After model_base:', model_base.shape)
+#print('After model_base:', model_base.shape)
 print('Initiation done')
 
 
 def historical_data_func():
+    """
+        Calling query for defining Historical data and saving it in a dataframe
+        Arguments: NA
+        Return: 1 dataframe
+    """
     global confs
     get_confs()  # Call get_confs to update the global confs dictionary
     client = bigquery.Client()
     sub_types = ''
-    if confs['Product_Type'] == 'Home Loan':
-        for element in Home_Loan:
-            sub_types = sub_types + "'" + element + "'" + ','
-        sub_types = sub_types[:len(sub_types) - 1]
-    # elif confs['Product_Type'] == 'Credit Card':
-    elif confs['Product_Type'] == 'Auto Loan':
-        for element in Auto_Loan:
-            sub_types = sub_types + "'" + element + "'" + ','
-        sub_types = sub_types[:len(sub_types) - 1]
-    elif confs['Product_Type'] == 'Personal Loan':
-        for element in Personal_Loan:
-            sub_types = sub_types + "'" + element + "'" + ','
-        sub_types = sub_types[:len(sub_types) - 1]
-    else:
-        for element in Credit_Loan:
-            sub_types = sub_types + "'" + element + "'" + ','
-        sub_types = sub_types[:len(sub_types) - 1]
+    sub_types = Loan_categories(confs)
                                       
                                       
     query = """WITH CTE1 AS 
@@ -104,7 +102,7 @@ def historical_data_func():
                 FROM (
                  SELECT *,
                  ROW_NUMBER() OVER (PARTITION BY CREDT_RPT_ID ORDER BY DISBURSED_DT DESC) AS rn
-                 FROM geoalgo-208508.roopya_analytics_dw.v3_account 
+                 FROM `{}` 
                  WHERE ACCT_TYPE in ({}) 
                  AND DISBURSED_DT BETWEEN DATE '{}' AND DATE '{}'
                  AND DATE_DIFF(DATE_REPORTED, DISBURSED_DT, MONTH) BETWEEN {} AND {}
@@ -116,11 +114,11 @@ def historical_data_func():
                 DATE_DIFF(CTE1.DISBURSED_DT, T1.DISBURSED_DT, MONTH) AS Prev_loan_LOR ,
                 LENGTH(T1.DPD___HIST)/3 AS Count_DPD_stream,
                 DATE_ADD(T1.DATE_REPORTED ,INTERVAL CAST((LENGTH(T1.DPD___HIST)/3*(-1) +1)AS INT64) MONTH) AS DPD_First_month
-                FROM geoalgo-208508.roopya_analytics_dw.v3_account AS T1 
+                FROM `{}` AS T1 
                 JOIN CTE1 ON T1.CREDT_RPT_ID = CTE1.CREDT_RPT_ID 
                 AND CTE1.DISBURSED_DT > T1.DISBURSED_DT)
                 SELECT * ,
-                DATE_DIFF(Ref_DISBURSED_DT, DPD_First_month, MONTH) AS DPD_month_tb_considered FROM CTE2;""".format(sub_types, confs['DISBURSED_Date_start'], confs['DISBURSED_Date_end'], confs['DATE_DIFF_start'], confs['DATE_DIFF_end'])
+                DATE_DIFF(Ref_DISBURSED_DT, DPD_First_month, MONTH) AS DPD_month_tb_considered FROM CTE2;""".format(confs['Table'], sub_types, confs['DISBURSED_Date_start'], confs['DISBURSED_Date_end'], confs['DATE_DIFF_start'], confs['DATE_DIFF_end'], confs['Table'])
 
     #print(query)
     # Run the query
@@ -136,7 +134,7 @@ def historical_data_func():
 historical_data = historical_data_func()
 print('Initiating Historical function')
 historical_data.to_csv('Historical_Data_{}.csv'.format(confs['Product_Type']), index=False)
-print('After historical_data:', model_base.shape)
+#print('After historical_data:', historical_data.shape)
 print('Initiation done')
 
 
@@ -145,7 +143,11 @@ def merged_data_func():
     data2 = pd.read_csv('Historical_Data_{}.csv'.format(confs['Product_Type']))
 
     def contributor_categories(df):
-        # Contributor Type Categories
+        """
+        Categorization based on Contributor type and return contributor categories
+        Arguments: 1 dataframe
+        Return: 1 dataframe
+        """
         categories = {
             'Category 1': ['NBF', 'CCC'],
             'Category 2': ['COP', 'OFI', 'HFC', 'RRB', 'MFI'],
@@ -170,10 +172,14 @@ def merged_data_func():
                               'Category 2': 'CONTRIBUTOR_TYPE_COP_OFI_HFC_RRB_MFI',
                               'Category 3': 'CONTRIBUTOR_TYPE_FRB_NAB_PRB_SFB',
                               'Category 4': 'CONTRIBUTOR_TYPE_ARC'}, inplace=True)
-
         return ct_df
 
     def account_status(df):
+        """
+        Aggregation based on Account Status and return countof each account status for all customers.
+        Arguments: 1 dataframe
+        Return: 1 dataframe
+        """
         categories = {
             'Category 1': ['Active'],
             'Category 2': ['Closed'],
@@ -181,40 +187,39 @@ def merged_data_func():
                            'WILFUL DEFAULT', 'SUIT FILED (WILFUL DEFAULT)']
         }
 
-        # Create a new column to represent the category for each entity
         df['Acc_St_Category'] = df['ACCOUNT_STATUS'].apply(
             lambda x: next((key for key, values in categories.items() if x in values), None))
 
-        # Pivot the DataFrame to create separate columns for each category
         as_df = df.pivot_table(index='CREDT_RPT_ID', columns='Acc_St_Category', values='ACCOUNT_STATUS',
                               aggfunc='count', fill_value=0)
 
-        # Reset the index to make 'Entity' a column again
         as_df.reset_index(inplace=True)
 
-        # Rename columns for better readability
         as_df.rename_axis(columns=None, inplace=True)
 
-        # Rename columns for better readability
         as_df.rename(columns={'Category 1': 'ACCOUNT_STATUS_Active', 'Category 2': 'ACCOUNT_STATUS_Closed',
                               'Category 3': 'ACCOUNT_STATUS_Others'}, inplace=True)
 
         return as_df
 
-    #print('Data1:', data1.shape)
-    #print('Data2:', data2.shape)
+    
+
     contributor_categories_df = contributor_categories(data2)
-    print('contributor_categories_df:', contributor_categories_df.shape)
+    #data1->Model Base   data2-> Historical Data
     data1 = pd.merge(data1, contributor_categories_df, on='CREDT_RPT_ID', how='left')
-    print('After contributer_categories:', data1.shape)
+    #print('After contributer_categories:', data1.shape)
 
     account_status_df = account_status(data2)
-    print('account_status_df:', account_status_df.shape)
+    #print('account_status_df:', account_status_df.shape)
     data1 = pd.merge(data1, account_status_df, on='CREDT_RPT_ID', how='left')
-    print('After account_status:', data1.shape)
+    #print('After account_status:', data1.shape)
 
     def customer_type(df_t1):
-        print('Initiating customer type')
+        """
+        Aggregation based on customer type and return good/bad customer type through delinquency and   touching bucket through user input.
+        Arguments: 1 dataframe
+        Return: 1 dataframe
+        """
         df_t1.drop_duplicates(inplace=True)
 
         def split_dpd_hist(x):
@@ -277,16 +282,19 @@ def merged_data_func():
         # Convert 'Good' to 0 and 'Bad' to 1
         df_t1['Good/Bad'] = df_t1['Good/Bad'].replace({'Good': 0, 'Bad': 1})
         
-        print('Customer_type is about to end')
+        #print('Customer_type is about to end')
 
         return df_t1
     
     def max_delinquency(df_t2):
-        print('Initiating max delinquency')
-        #df_t2 = df_t1.copy()  # Create a copy of the input dataframe
+        """
+        Aggregation based on delinquency and return the maximum delinquency of each customer.
+        Arguments: 1 dataframe
+        Return: 1 dataframe
+        """
         df_t2.drop_duplicates(inplace=True)
-        print('CREDT_RPT_ID:', len(df_t2['CREDT_RPT_ID'].unique()))
-        print('No of rows:', df_t2.shape)
+        #print('CREDT_RPT_ID:', len(df_t2['CREDT_RPT_ID'].unique()))
+        #print('No of rows:', df_t2.shape)
 
         def split_dpd_hist(x):
             if isinstance(x, str) and x != "":
@@ -354,71 +362,55 @@ def merged_data_func():
             'max_delinquency_status': 'max'
         }).reset_index()
 
-        print('Max_delinquency function done')
+        #print('Max_delinquency function done')
         return df_t2_max_delq
-
     
-    
-########################################################################################################    
     def aggregating_disbursed_and_current_balance(df_q2):
-
-
-        # Initialize 'agg_df' with the 'CREDT_RPT_ID' column
+        """
+        Aggregation based on Disbursed amount, current balance and return the maximum delinquency of each customer.
+        Arguments: 1 dataframe
+        Return: 1 dataframe
+        """
         agg_df = pd.DataFrame(df_q2['CREDT_RPT_ID'])
-
-        print('Rockyyyyyyyyyyyyyyyyyyyyyyyyyyy ghus raha:', agg_df.shape)
-        # Group by 'CREDT_RPT_ID' in the original DataFrame 'df_q2' and calculate the total sum for each column
         agg_total_disbursed = df_q2.groupby('CREDT_RPT_ID')['_DISBURSED_AMT_HIGH_CREDIT'].sum().reset_index()
         agg_total_current_bal = df_q2.groupby('CREDT_RPT_ID')['_CURRENT_BAL'].sum().reset_index()
-
-        # Merge the aggregated columns with 'agg_df' using 'CREDT_RPT_ID' as the key
         agg_df = pd.merge(agg_df, agg_total_disbursed, on='CREDT_RPT_ID', how='left')
         agg_df = pd.merge(agg_df, agg_total_current_bal, on='CREDT_RPT_ID', how='left')
-
-        # Rename the columns for clarity
         agg_df = agg_df.rename(columns={'_DISBURSED_AMT_HIGH_CREDIT': 'TOTAL_DISBURSED_AMT_HIGH_CREDIT', '_CURRENT_BAL': 'TOTAL_CURRENT_BAL'})
-
-
-        # Filter the DataFrame to include only rows where ACCOUNT_STATUS is 'ACTIVE'
         active_accounts = df_q2[df_q2['ACCOUNT_STATUS'] == 'Active']
-
-        # Group by 'CREDT_RPT_ID' in the filtered DataFrame 'active_accounts' and calculate the sum for the selected columns
         agg_total_disbursed = active_accounts.groupby('CREDT_RPT_ID')['_DISBURSED_AMT_HIGH_CREDIT'].sum().reset_index()
         agg_total_current_bal = active_accounts.groupby('CREDT_RPT_ID')['_CURRENT_BAL'].sum().reset_index()
-
-        # Merge the aggregated columns with the existing 'agg_df' using 'CREDT_RPT_ID' as the key
         agg_df = pd.merge(agg_df, agg_total_disbursed, on='CREDT_RPT_ID', how='left')
         agg_df = pd.merge(agg_df, agg_total_current_bal, on='CREDT_RPT_ID', how='left')
-
-        # Rename the columns with the 'Active' prefix for clarity
         agg_df = agg_df.rename(columns={'_DISBURSED_AMT_HIGH_CREDIT': 'Active_TOTAL_DISBURSED_AMT_HIGH_CREDIT', '_CURRENT_BAL': 'Active_TOTAL_CURRENT_BAL'})
-        
-        print('Rockyyyyyyyyyyyyyyyyyyyyyyyyyyy se bahar aa raha:', agg_df.shape)
         return agg_df
 
-##########################################################################################################################    
-    
-    print('Before Customer_type:', data1.shape)
+########################################################################################################     
+    #print('Before Customer_type:', data1.shape)
     data1 = customer_type(data1)
-    print('After Customer_type:', data1.shape)
+    #print('After Customer_type:', data1.shape)
     
     max_delinquency_df = max_delinquency(data2)
-    print('After max_delinquency:', max_delinquency_df.shape)
+    #print('After max_delinquency:', max_delinquency_df.shape)
     
-    print('Before joining max_delinquency:', data1.shape)
+    #print('Before joining max_delinquency:', data1.shape)
     data1 = pd.merge(data1, max_delinquency_df, on='CREDT_RPT_ID', how='left')
-    print('After joining max_delinquency:', data1.shape)
+    #print('After joining max_delinquency:', data1.shape)
     #data1 = pd.merge(data1, customer_type_df, on='CREDT_RPT_ID', how='left')
     
-    print('Before going into Rockys code', data1.shape)
+    #print('Before going into Rockys code', data1.shape)
     aggregate_df = aggregating_disbursed_and_current_balance(data1)
-    print('After coming out from Rocky code:', aggregate_df.shape)
+    #print('After coming out from Rocky code:', aggregate_df.shape)
     
     data1 = pd.merge(data1, aggregate_df, on='CREDT_RPT_ID', how='left')
-    print('After merging from Rocky code:', data1.shape)
+    #print('After merging from Rocky code:', data1.shape)
     return data1
+
+
+######################################################################################################## 
 
 merged_data = merged_data_func()
 print('Initiating Merged function')
 merged_data.to_csv('Training data_{}.csv'.format(confs['Product_Type']), index=False)
-print('Initiation done')
+print('Final df shape is:', merged_data.shape)
+print('Successfully created the Training data')
