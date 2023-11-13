@@ -1,4 +1,6 @@
 from google.cloud import bigquery
+from google.cloud import storage
+from pandas_gbq import to_gbq
 import pandas as pd
 import numpy as np
 
@@ -40,6 +42,11 @@ def Loan_categories(confs):
 
 get_confs()
 
+client = bigquery.Client()
+project_id = f"{confs['PROJECT_ID']}"
+destination_table_id = f"{confs['DESTINATION_ID']}"
+
+
 def remove_contributor_types(confs):
     loan_subtypes = confs['OWNERSHIP_IND_REMOVE'].split(',')
     loan_subtypes_list = []
@@ -56,6 +63,150 @@ def remove_contributor_types(confs):
     return loan_exclude
 
 #sub_types = Loan_categories(confs)
+def basic_cleaning_steps():
+    """
+    Here the basic data cleaning is going on
+    """
+    global confs
+    # Create a client using default credentials
+    client = storage.Client()
+    
+    df1 = pd.read_excel(f"{confs['RAW_APPLICATION_DATA']}")
+
+    print('Read successful!!!!!!')
+    
+    file_path_w = '{}'.format(confs['APPLICATION_DATA'])
+    df1.to_csv(file_path_w, index = False, index_label = False)
+
+    df2 = pd.read_csv(f"{confs['APPLICATION_DATA']}")
+
+    df = df2[['CREATED DATE','CUSTOMER ID','PHONE','GENDER','PAN','MARITAL STATUS','INCOME','CITY','STATE',
+                 'PROFESSION TYPE','RESIDENCE TYPE','TOTAL WORK EXPERIENCE','QUALIFICATION','EXISTING EMI', 
+                 'COMPANY TYPE','EMI AMOUNT','DESIRED LOAN AMOUNT','TENURE','LOAN PURPOSE']]
+
+    def snake_case_and_lowercase(column_name):
+        return column_name.replace(' ', '_').lower()
+
+    df.columns = df.columns.map(snake_case_and_lowercase)
+
+    df['gender'] = df['gender'].replace([None, 'Third gender'], 'Others')
+
+    df['marital_status'] = df['marital_status'].replace({'married': 'Married', 'single': 'Single', 'unmarried': 'Single'})
+
+    def qstn_replace(data, column_name):
+        pattern1 = r'\?+|\d+'
+        data[column_name] = data[column_name].str.replace(pattern1, 'Others')
+        pattern2 = r'\b(Others\s*)+\b'
+        data[column_name] = data[column_name].str.replace(pattern2, 'Others')
+        data[column_name] = data[column_name].replace([None], 'Others')
+        return data
+
+    df = qstn_replace(df, 'marital_status')
+
+    df['marital_status'] = df['marital_status'].replace(['MariÃ©'], 'Others')
+
+    df['profession_type'] = df['profession_type'].replace({'SelfEmployed': 'Self Employed/ Own Business'})
+    df['profession_type'] = df['profession_type'].replace([None], 'Others')
+
+    df['company_type'] = df['company_type'].replace({'PRIVATE_LIMITED': 'Private_Limited', 
+                                                     'Private Company': 'Private_Limited', 
+                                                     'Government': 'Government / PSU', 
+                                                     'Sole_Proprietorship': 'Proprietorship', 
+                                                     'Partnership / Proprietor': 'Proprietorship', 
+                                                     'Partnership Company / Proprietor': 'Proprietorship', 
+                                                     'Partnership_Firm': 'Proprietorship', 
+                                                     'Partnership': 'Proprietorship', 
+                                                     'Public_Sector': 'Public_Limited',
+                                                     'Private Ltd.': 'Private_Limited',
+                                                     'Public Ltd.': 'Public_Limited'})
+    
+    df['company_type'] = df['company_type'].fillna(value='Others')
+    df['company_type'] = df['company_type'].replace(['Graduate', 'greater than 10 Years', '1 Year - 3 Years'], 'Others')
+
+    df = qstn_replace(df, 'loan_purpose')
+
+    df['loan_purpose'] = df['loan_purpose'].replace(['OTHERS', 'Others / Others', 'Others / Others-Others'], 'Others')
+
+    df['qualification'] = df['qualification'].replace({'under graduate': 'Under Graduate', 
+                                                       'UnderGraduate': 'Under Graduate',
+                                                       'post graduate': 'Post Graduate',
+                                                       'PostGraduate': 'Post Graduate',
+                                                       'graduate': 'Graduate', 'Other': 'Others'})
+
+    df = qstn_replace(df, 'qualification')
+
+    df['qualification'] = df['qualification'].replace(['Others-Others-Others:Others:Others', 
+                                                       'OthersYear - OthersYears'], 'Others')
+
+    def categorize_city(city):
+        if city in ['Mumbai', 'New Delhi', 'Bangalore', 'Kolkata', 'Hyderabad', 'Chennai']:
+            return 'Tier_1'
+        elif pd.isna(city):
+            return 'Others'
+        else:
+            return 'Tier_2'
+
+    df['city_tier'] = df['city'].apply(categorize_city)
+    
+    state_zone_mapping = {
+    'Jammu and Kashmir': 'North','Punjab': 'North','Haryana': 'North','Uttar Pradesh': 'North','UP UK': 'North',
+    'Uttarakhand': 'North','UTTRAKHAND': 'North','Himachal Pradesh': 'North','Uttaranchal': 'North',
+    'Delhi': 'North','Rajasthan': 'North','Goa': 'West','Gujarat': 'West','Dadra and Nagar Haveli': 'West',
+    'Daman and Diu': 'West','Maharashtra': 'West','Madhya Pradesh': 'Central','Chhattisgarh': 'Central',
+    'Bihar': 'East','Odisha': 'East','Jharkhand': 'East','West Bengal': 'East','Odisha': 'East',
+    'Tamil Nadu': 'South','Kerala': 'South','Karnataka': 'South','Andhra Pradesh': 'South','Telangana': 'South', 
+    'Andhra Pradesh': 'South', 'Pondicherry': 'South', 'Not Found': 'Others'
+    }
+    
+    df['state'] = df['state'].map(state_zone_mapping)
+    df['state'] = df['state'].fillna(value='Others')
+
+    specified_values = [ '5 Years - 10 Years','3 Years - 5 Years','greater than 10 Years','1 Year - 3 Years',
+        'less than 1 Year']
+
+    # Replace values not in the specified list with 'Others'
+    df['total_work_experience'] = df['total_work_experience'].apply(lambda x: x if x in specified_values else 'Others')
+
+    df['existing_emi'] = df['existing_emi'].replace({'yes': 'Yes', 'no': 'No', 'Graduate': 'No', 
+                                                     'Private Company': 'No'})
+
+    df['existing_emi'] = df['existing_emi'].replace([None], 'Others')
+
+    specified_values = ['Owned by Parents/Sibling','Rented with Family','Owned by Self-Spouse',
+                        'Rented with Friends','Rented- Staying Alone']
+
+    df['residence_type'] = df['residence_type'].apply(lambda x: x if x in specified_values else 'Others')
+
+    def convert_numeric(value):
+        import re
+        numeric_part = re.sub('[^0-9]', '', str(value))
+        return int(numeric_part) if numeric_part else None
+
+    df['emi_amount'] = df['emi_amount'].apply(convert_numeric)
+
+    df['desired_loan_amount'] = pd.to_numeric(df['desired_loan_amount'], errors='coerce').fillna(0)
+    df['income'] = pd.to_numeric(df['income'], errors='coerce').fillna(0)
+    df['emi_amount'] = pd.to_numeric(df['emi_amount'], errors='coerce').fillna(0)
+    df['tenure'] = pd.to_numeric(df['tenure'], errors='coerce').fillna(0)
+
+    df1 = df.drop(columns = ['city'], axis = 1)
+    
+    print(df1.columns)
+    df1.to_csv('Untitled Folder/Raw_Cleaned_dataset.csv', index=False,index_label=False)
+    df2 = pd.read_csv('Untitled Folder/Raw_Cleaned_dataset.csv')
+    
+    print('Almost there, hold on')
+    #print(df2.head(5))
+    
+    client = bigquery.Client()
+    project_id = f"{confs['PROJECT_ID']}"
+    destination_table_id = f"{confs['DESTINATION_ID']}"
+
+    to_gbq(df2, destination_table_id, project_id=project_id, if_exists='replace')
+    return 0
+print('Starting cleaning steps')
+basic_cleaning_steps()
+print('Successfully completed cleaning steps')
 
 def model_base_func():
     """
@@ -73,57 +224,28 @@ def model_base_func():
     loan_subtypes = remove_contributor_types(confs)
     #print(loan_subtypes)
 
-    query = """WITH CTE1 AS (
-              SELECT app.*,inq.CREDT_RPT_ID 
-              FROM `{}` AS inq
-              LEFT JOIN `{}` AS app 
-              ON inq.PHONE_1 = app.PHONE
-            ),
+    query = f"""WITH CTE1 AS (
+                  SELECT inq.CREDT_RPT_ID, inq.PHONE_1, acc.*, app.created_date,app.customer_id,app.phone,app.gender AS gender,
+                  app.pan,app.marital_status,app.income,app.city_tier,app.state,app.profession_type,app.residence_type,
+                  app.total_work_experience,app.qualification,app.existing_emi,app.company_type,app.emi_amount,
+                  app.desired_loan_amount,app.tenure,app.loan_purpose,
+                    ROW_NUMBER() OVER (PARTITION BY inq.CREDT_RPT_ID ORDER BY acc.DISBURSED_DT DESC) AS rn
+                  FROM `{confs['INQUIRY_TABLE']}` AS inq
+                  LEFT JOIN `{confs['ACCOUNT_TABLE']}` AS acc ON inq.CREDT_RPT_ID = acc.CREDT_RPT_ID
+                  LEFT JOIN `{confs['PROJECT_ID']}.{confs['DESTINATION_ID']}` AS app ON inq.PHONE_1 = app.PHONE
+                  WHERE 
+                    ACCT_TYPE IN ({sub_types})
+                    AND DATE(app.created_date) <= acc.DISBURSED_DT
+                    AND acc.DISBURSED_DT <= DATE '{confs['DISBURSED_DATE_END']}'
+                    AND DATE_DIFF(acc.DATE_REPORTED, acc.DISBURSED_DT, MONTH) BETWEEN {confs['DATE_DIFF_START']} AND {confs['DATE_DIFF_END']}
+                    AND acc.OWNERSHIP_IND NOT IN ({loan_subtypes})
+                )
 
-            CTE2 AS (
-              SELECT 
-                acc.*,
-                c.created_date,
-                c.customer_id,
-                c.phone,
-                c.gender AS c_gender,
-                c.pan,
-                c.marital_status,
-                c.income,
-                c.city_tier,
-                c.state,
-                c.profession_type,
-                c.residence_type,
-                c.total_work_experience,
-                c.qualification,
-                c.existing_emi,
-                c.company_type,
-                c.emi_amount,
-                c.desired_loan_amount,
-                c.tenure,
-                c.loan_purpose
-              FROM CTE1 AS c 
-              LEFT JOIN `{}` AS acc
-              ON c.CREDT_RPT_ID = acc.CREDT_RPT_ID
-            ),
+                SELECT *
+                FROM CTE1 
+                WHERE rn = 1;"""
 
-            CTE3 AS (
-              SELECT *,
-                ROW_NUMBER() OVER (PARTITION BY CTE2.CREDT_RPT_ID ORDER BY CTE2.DISBURSED_DT DESC) AS rn
-              FROM CTE2
-              WHERE 
-                ACCT_TYPE IN ({})
-                AND DATE(CTE2.created_date) < CTE2.DISBURSED_DT
-                AND DISBURSED_DT <= DATE '{}' 
-                AND DATE_DIFF(DATE_REPORTED, DISBURSED_DT, MONTH) BETWEEN {} AND {}
-                AND OWNERSHIP_IND NOT IN ({})
-            )
-
-            SELECT * 
-            FROM CTE3 
-            WHERE rn = 1;""".format(confs['INQUIRY_TABLE'], confs['APPLICATION_TABLE'], confs['ACCOUNT_TABLE'], sub_types, confs['DISBURSED_DATE_END'], confs['DATE_DIFF_START'], confs['DATE_DIFF_END'], loan_subtypes)
-
-    #print(query)
+    print(query)
     # Run the query
     query_job = client.query(query)
     results = query_job.result()
@@ -138,8 +260,6 @@ print('Initiating Model Base function')
 model_base.to_csv('Untitled Folder/Model_Base_{}.csv'.format(confs['PRODUCT_TYPE']), index=False)
 #print('After model_base:', model_base.shape)
 print('Initiation done')
-
-
 
 
 def historical_data_func():
@@ -157,46 +277,45 @@ def historical_data_func():
     loan_subtypes = remove_contributor_types(confs)
                                       
                                       
-    query = """WITH CTE1 AS(
-                  SELECT * 
-                  FROM `{}` as inq
-                  LEFT JOIN `{}` as app 
-                  ON inq.PHONE_1 = app.PHONE
-                ),
+    query = f"""WITH CTE1 AS (
+                SELECT inq.PHONE_1, acc.*, app.created_date, app.customer_id, app.phone, app.gender AS gender,
+                    app.pan, app.marital_status, app.income, app.city_tier, app.state, app.profession_type, app.residence_type,
+                    app.total_work_experience, app.qualification, app.existing_emi, app.company_type, app.emi_amount,
+                    app.desired_loan_amount, app.tenure, app.loan_purpose,
+                    ROW_NUMBER() OVER (PARTITION BY inq.CREDT_RPT_ID ORDER BY acc.DISBURSED_DT DESC) AS rn
+                FROM `{confs['INQUIRY_TABLE']}` AS inq
+                LEFT JOIN `{confs['ACCOUNT_TABLE']}` AS acc ON inq.CREDT_RPT_ID = acc.CREDT_RPT_ID
+                LEFT JOIN `{confs['PROJECT_ID']}.{confs['DESTINATION_ID']}` AS app ON inq.PHONE_1 = app.PHONE
+                WHERE 
+                    ACCT_TYPE IN ({sub_types})
+                    AND DATE(app.created_date) <= acc.DISBURSED_DT
+                    AND acc.DISBURSED_DT <= DATE '{confs['DISBURSED_DATE_END']}'
+                    AND DATE_DIFF(acc.DATE_REPORTED, acc.DISBURSED_DT, MONTH) BETWEEN {confs['DATE_DIFF_START']} AND {confs['DATE_DIFF_END']}
+                    AND acc.OWNERSHIP_IND NOT IN ({loan_subtypes})
+            ),
 
-                CTE2 AS(
-                  SELECT acc.*,c.created_date 
-                  FROM CTE1 AS c 
-                  LEFT JOIN `{}` as acc
-                  ON c.CREDT_RPT_ID = acc.CREDT_RPT_ID
-                ),
+            CTE2 AS (
+                SELECT * FROM CTE1 
+                WHERE CTE1.rn = 1
+            ),
 
-                CTE3 AS(
-                  SELECT *,
-                     ROW_NUMBER() OVER (PARTITION BY CTE2.CREDT_RPT_ID ORDER BY CTE2.DISBURSED_DT DESC) AS rn
-                     FROM CTE2
-                     WHERE ACCT_TYPE IN ({})
-                     AND DATE(CTE2.created_date) < CTE2.DISBURSED_DT
-                     AND DISBURSED_DT <= DATE '{}' 
-                     AND DATE_DIFF(DATE_REPORTED, DISBURSED_DT, MONTH) BETWEEN {} AND {}
-                     AND OWNERSHIP_IND NOT IN ({})
-                ),
+            CTE3 AS (
+                SELECT 
+                    CTE2.CREDT_RPT_ID, T1.*,
+                    CTE2.DISBURSED_DT AS Ref_DISBURSED_DT,
+                    DATE_DIFF(CTE2.DISBURSED_DT, T1.DISBURSED_DT, MONTH) AS Prev_loan_LOR,
+                    LENGTH(T1.DPD___HIST) / 3 AS Count_DPD_stream,
+                    DATE_ADD(T1.DATE_REPORTED, INTERVAL CAST((LENGTH(T1.DPD___HIST) / 3 * (-1) + 1) AS INT64) MONTH) AS DPD_First_month
+                FROM 
+                    `{confs['ACCOUNT_TABLE']}` AS T1 
+                JOIN 
+                    CTE2 ON CTE2.CREDT_RPT_ID = T1.CREDT_RPT_ID
+                    AND CTE2.DISBURSED_DT > T1.DISBURSED_DT
+            )
 
-                CTE4 AS(
-                  SELECT * 
-                  FROM CTE3 c
-                  WHERE c.rn = 1
-                ),
-
-                CTE5 AS(
-                  SELECT T1.* , CTE4.DISBURSED_DT AS Ref_DISBURSED_DT,
-                    DATE_DIFF(CTE4.DISBURSED_DT, T1.DISBURSED_DT, MONTH) AS Prev_loan_LOR ,
-                    LENGTH(T1.DPD___HIST)/3 AS Count_DPD_stream,
-                    DATE_ADD(T1.DATE_REPORTED ,INTERVAL CAST((LENGTH(T1.DPD___HIST)/3*(-1) +1)AS INT64) MONTH) AS DPD_First_month
-                    FROM `{}` AS T1 
-                    JOIN CTE4 ON T1.CREDT_RPT_ID = CTE4.CREDT_RPT_ID 
-                    AND CTE4.DISBURSED_DT > T1.DISBURSED_DT)
-                    SELECT * ,DATE_DIFF(Ref_DISBURSED_DT, DPD_First_month, MONTH) AS DPD_month_tb_considered FROM CTE5;""".format(confs['INQUIRY_TABLE'], confs['APPLICATION_TABLE'], confs['ACCOUNT_TABLE'], sub_types, confs['DISBURSED_DATE_END'], confs['DATE_DIFF_START'], confs['DATE_DIFF_END'], loan_subtypes, confs['ACCOUNT_TABLE'])
+            SELECT *, DATE_DIFF(Ref_DISBURSED_DT, DPD_First_month, MONTH) AS DPD_month_tb_considered 
+            FROM CTE3;
+            """
 
     #print(query)
     # Run the query
@@ -215,6 +334,88 @@ historical_data.to_csv('Untitled Folder/Historical_Data_{}.csv'.format(confs['PR
 #print('After historical_data:', historical_data.shape)
 print('Initiation done')
 
+def read_ioi_func():
+    
+    global confs
+    client = bigquery.Client()
+    sub_types = ''
+    sub_types = Loan_categories(confs)
+    #print(sub_types)
+    loan_subtypes = ''
+    loan_subtypes = remove_contributor_types(confs)
+    
+    query = f"""WITH CTE1 AS (
+                SELECT app.*, inq.CREDT_RPT_ID 
+                FROM `{confs['INQUIRY_TABLE']}` AS inq
+                LEFT JOIN `{confs['PROJECT_ID']}.{confs['DESTINATION_ID']}` AS app 
+                ON inq.PHONE_1 = app.PHONE
+            ),
+
+            CTE2 AS (
+                SELECT 
+                    acc.*,
+                    c.created_date,
+                    c.customer_id,
+                    c.phone,
+                    c.gender AS gender,
+                    c.pan,
+                    c.marital_status,
+                    c.income,
+                    c.city_tier,
+                    c.state,
+                    c.profession_type,
+                    c.residence_type,
+                    c.total_work_experience,
+                    c.qualification,
+                    c.existing_emi,
+                    c.company_type,
+                    c.emi_amount,
+                    c.desired_loan_amount,
+                    c.tenure,
+                    c.loan_purpose
+                FROM CTE1 AS c 
+                LEFT JOIN `{confs['ACCOUNT_TABLE']}` AS acc
+                ON c.CREDT_RPT_ID = acc.CREDT_RPT_ID
+            ),
+
+            CTE3 AS (
+                SELECT *,
+                    ROW_NUMBER() OVER (PARTITION BY CTE2.CREDT_RPT_ID ORDER BY CTE2.DISBURSED_DT DESC) AS rn
+                FROM CTE2
+                WHERE 
+                    ACCT_TYPE IN ({sub_types})
+                    AND DATE(CTE2.created_date) < CTE2.DISBURSED_DT
+                    AND CTE2.DISBURSED_DT <= DATE '{confs['DISBURSED_DATE_END']}'
+                    AND DATE_DIFF(CTE2.DATE_REPORTED, CTE2.DISBURSED_DT, MONTH) BETWEEN {confs['DATE_DIFF_START']} AND {confs['DATE_DIFF_END']}
+                    AND CTE2.OWNERSHIP_IND NOT IN ({loan_subtypes})
+            ),
+            CTE4 AS (
+                SELECT * 
+                FROM CTE3 
+                WHERE rn = 1
+            )
+
+            SELECT T1.*, CTE4.DISBURSED_DT AS Ref_DISBURSED_DT
+            FROM `{confs['IOI_TABLE']}` AS T1 
+            JOIN CTE4 ON T1.CREDT_RPT_ID = CTE4.CREDT_RPT_ID 
+            WHERE CTE4.DISBURSED_DT > T1.INQUIRY_DATE;
+            """
+
+    #print(query)
+    # Run the query
+    query_job = client.query(query)
+    results = query_job.result()
+
+    df = results.to_dataframe()
+
+    # df.to_csv('Historical_Data.csv', index=False)
+    return df
+
+inquiry_data = read_ioi_func()
+print('Initiating IOI function')
+inquiry_data.to_csv('Untitled Folder/IOI_Data_{}.csv'.format(confs['PRODUCT_TYPE']), index=False)
+#print('After historical_data:', historical_data.shape)
+print('Initiation done')
 
 def merged_data_func():
     """
@@ -224,6 +425,22 @@ def merged_data_func():
     """
     data1 = pd.read_csv('Untitled Folder/Model_Base_{}.csv'.format(confs['PRODUCT_TYPE']))
     data2 = pd.read_csv('Untitled Folder/Historical_Data_{}.csv'.format(confs['PRODUCT_TYPE']))
+    data3 = pd.read_csv('Untitled Folder/IOI_Data_{}.csv'.format(confs['PRODUCT_TYPE']))
+    
+    def pivot_and_aggregation_of_inquiry(df_ioi):
+        """
+        Aggregation based on Inquiry type and return aggregated inquiry with unique Credit Report Id.
+        Arguments: 1 dataframe
+        Return: 1 dataframe
+        """
+        df_ioi_counts=pd.DataFrame(df_ioi['CREDT_RPT_ID'].value_counts())
+        df_ioi_counts.reset_index(inplace=True)
+        df_ioi_counts.rename(columns={"CREDT_RPT_ID":"Number of Inquiry","index":"CREDT_RPT_ID"},inplace=True)
+        return df_ioi_counts
+    
+    #Call the pivot_and_aggregation_of_inquiry to perform action, will use this at the end.
+    data3 = pivot_and_aggregation_of_inquiry(data3)
+    
 
     def contributor_categories(df):
         """
@@ -493,16 +710,21 @@ def merged_data_func():
     data1 = pd.merge(data1, aggregate_df, on='CREDT_RPT_ID', how='left')
     
     columns_to_drop = [f'M{i}' for i in range(37)]
-    additional_columns = ['LOS_APP_ID', 'CANDIDATE___ID', 'CUSTOMER_ID_MBR_ID', 'BRANCH', 'KENDRA', 'SELF_INDICATOR', 'MATCH_TYPE', 'ACC_NUM', 'CREDIT_GRANTOR', 'ACCT_TYPE', 'CONTRIBUTOR_TYPE', 'DATE_REPORTED', 'OWNERSHIP_IND', 'ACCOUNT_STATUS', 'DISBURSED_DT', 'CLOSE_DT', 'LAST_PAYMENT_DATE', 'CREDIT_LIMIT_SANC_AMT', '_INSTALLMENT_AMT', 'INSTALLMENT_FREQUENCY', 'WRITE_OFF_DATE', '_OVERDUE_AMT', '_WRITE_OFF_AMT', 'ASSET_CLASS', '_ACCOUNT_REMARKS', 'LINKED_ACCOUNTS', 'REPORTED_DATE___HIST_', 'DPD___HIST', 'ASSET_CLASS___HIST_', 'HIGH_CRD___HIST_', 'CUR_BAL___HIST_', 'DAS___HIST_', 'AMT_OVERDUE___HIST_', 'AMT_PAID___HIST_', 'Unnamed__41', 'rn']
+    additional_columns = ['LOS_APP_ID', 'CANDIDATE___ID', 'CUSTOMER_ID_MBR_ID', 'BRANCH', 'KENDRA', 'SELF_INDICATOR', 'MATCH_TYPE', 'ACC_NUM', 'CREDIT_GRANTOR', 'ACCT_TYPE', 'CONTRIBUTOR_TYPE', 'DATE_REPORTED', 'OWNERSHIP_IND', 'ACCOUNT_STATUS', 'DISBURSED_DT', 'CLOSE_DT', 'LAST_PAYMENT_DATE', 'CREDIT_LIMIT_SANC_AMT', '_INSTALLMENT_AMT', 'INSTALLMENT_FREQUENCY', 'WRITE_OFF_DATE', '_OVERDUE_AMT', '_WRITE_OFF_AMT', 'ASSET_CLASS', '_ACCOUNT_REMARKS', 'LINKED_ACCOUNTS', 'REPORTED_DATE___HIST_', 'DPD___HIST', 'ASSET_CLASS___HIST_', 'HIGH_CRD___HIST_', 'CUR_BAL___HIST_', 'DAS___HIST_', 'AMT_OVERDUE___HIST_', 'AMT_PAID___HIST_', 'Unnamed__41', 'rn', 'PHONE_1', 'CREDT_RPT_ID_1']
 
     columns_to_drop.extend(additional_columns)
 
     data1 = data1.drop(columns=columns_to_drop, errors='ignore')
+    
+    data1 = pd.merge(data1, data3, on='CREDT_RPT_ID', how='left')
+    
+    data1['Number of Inquiry'].replace(np.nan, 0, inplace=True)
+    
     #print('After merging from Rocky code:', data1.shape)
     return data1
 
 
-######################################################################################################## 
+##################################################################################################
 
 # def snake_case_and_uppercase(column_name):
 #     return column_name.replace(' ', '_').upper()
@@ -513,7 +735,7 @@ merged_data.columns = merged_data.columns.str.upper()
 merged_data.columns = merged_data.columns.str.replace(' ', '_')
 
 print('Initiating Merged function')
-merged_data.to_csv('Untitled Folder/Training data_{}.csv'.format(confs['PRODUCT_TYPE']), index=False)
+merged_data.to_csv('Untitled Folder/Bhang data_{}.csv'.format(confs['PRODUCT_TYPE']), index=False)
 print('Final df shape is:', merged_data.shape)
 #print('Final columns:', list(merged_data.columns))
 print('Successfully created the Training data')
