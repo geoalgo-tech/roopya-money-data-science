@@ -1,11 +1,12 @@
-#Training data
+#Testing data
 from google.cloud import bigquery
 from google.cloud import storage
 from pandas_gbq import to_gbq
 import pandas as pd
 import numpy as np
+import pickle
 
-print('Kartik Puja')
+print('Hmmm')
 confs = {}
 Home_Loan = ['Housing Loan', 'Property Loan', 'Leasing', 'Microfinance Housing Loan']
 Credit_Loan = ['Credit Card', 'Corporate Credit Card', 'Kisan Credit Card', 'Secured Credit Card', 'Loan on Credit Card']
@@ -42,7 +43,7 @@ def Loan_categories(confs):
     return sub_types
 
 get_confs()
-
+print(confs['PRODUCT_TYPE'])
 client = bigquery.Client()
 project_id = f"{confs['PROJECT_ID']}"
 destination_table_id = f"{confs['DESTINATION_ID']}"
@@ -72,14 +73,16 @@ def basic_cleaning_steps():
     # Create a client using default credentials
     client = storage.Client()
     
-    #df1 = pd.read_excel(f"{confs['RAW_APPLICATION_DATA']}")
-    ##print("Reading Excel File")
-    #file_path_w = '{}'.format(confs['APPLICATION_DATA'])
-    #df1.to_csv(file_path_w, index = False, index_label = False)
+#     df1 = pd.read_excel(f"{confs['RAW_APPLICATION_DATA']}")
+
+#     print('Read successful!!!!!!')
+    
+#     file_path_w = '{}'.format(confs['APPLICATION_DATA'])
+#     df1.to_csv(file_path_w, index = False, index_label = False)
 
     df2 = pd.read_csv(f"{confs['APPLICATION_DATA']}")
+    #df2 = df2.head(10000)
 
-    print('Read successful!!!!!!')
     df = df2[['CREATED DATE','CUSTOMER ID','PHONE','GENDER','PAN','MARITAL STATUS','INCOME','CITY','STATE',
                  'PROFESSION TYPE','RESIDENCE TYPE','TOTAL WORK EXPERIENCE','QUALIFICATION','EXISTING EMI', 
                  'COMPANY TYPE','EMI AMOUNT','DESIRED LOAN AMOUNT','TENURE','LOAN PURPOSE']]
@@ -102,10 +105,8 @@ def basic_cleaning_steps():
         return data
 
     df = qstn_replace(df, 'marital_status')
-    
 
     df['marital_status'] = df['marital_status'].replace(['MariÃ©'], 'Others')
-    print(df.columns)
     
     def pan_valid(data,column):
         import re
@@ -114,6 +115,7 @@ def basic_cleaning_steps():
         data = data.drop(columns = [column], axis = 1)
         return data
     df = pan_valid(df, 'pan')
+
     df['profession_type'] = df['profession_type'].replace({'SelfEmployed': 'Self Employed/ Own Business'})
     df['profession_type'] = df['profession_type'].replace([None], 'Others')
 
@@ -217,134 +219,6 @@ print('Starting cleaning steps')
 basic_cleaning_steps()
 print('Successfully completed cleaning steps')
 
-def model_base_func():
-    """
-        Calling query for defining model base data and saving it in a dataframe
-        Arguments: NA
-        Return: 1 dataframe
-    """
-    global confs
-    #get_confs()  # Call get_confs to update the global confs dictionary
-    client = bigquery.Client()
-    sub_types = ''
-    sub_types = Loan_categories(confs)
-    #print(sub_types)
-    loan_subtypes = ''
-    loan_subtypes = remove_contributor_types(confs)
-    #print(loan_subtypes)
-
-    query = f"""WITH CTE1 AS (
-                  SELECT inq.CREDT_RPT_ID, inq.PHONE_1, acc.*, app.created_date,app.customer_id,app.phone,app.gender AS gender,
-                  app.is_valid_pan,app.marital_status,app.income,app.city_tier,app.state,app.profession_type,app.residence_type,
-                  app.total_work_experience,app.qualification,app.existing_emi,app.company_type,app.emi_amount,
-                  app.desired_loan_amount,app.tenure,app.loan_purpose,
-                    ROW_NUMBER() OVER (PARTITION BY inq.CREDT_RPT_ID ORDER BY acc.DISBURSED_DT DESC) AS rn
-                  FROM `{confs['INQUIRY_TABLE']}` AS inq
-                  LEFT JOIN `{confs['ACCOUNT_TABLE']}` AS acc ON inq.CREDT_RPT_ID = acc.CREDT_RPT_ID
-                  LEFT JOIN `{confs['PROJECT_ID']}.{confs['DESTINATION_ID']}` AS app ON inq.PHONE_1 = app.PHONE
-                  WHERE 
-                    ACCT_TYPE IN ({sub_types})
-                    AND DATE(app.created_date) <= acc.DISBURSED_DT
-                    AND acc.DISBURSED_DT <= DATE '{confs['DISBURSED_DATE_END']}'
-                    AND DATE_DIFF(acc.DATE_REPORTED, acc.DISBURSED_DT, MONTH) BETWEEN {confs['DATE_DIFF_START']} AND {confs['DATE_DIFF_END']}
-                    AND acc.OWNERSHIP_IND NOT IN ({loan_subtypes})
-                )
-
-                SELECT *
-                FROM CTE1 
-                WHERE rn = 1;"""
-
-    print(query)
-    # Run the query
-    query_job = client.query(query)
-    results = query_job.result()
-    df = results.to_dataframe()
-    print('**********', df.shape)
-
-    return df
-
-
-
-model_base = model_base_func()
-print('Initiating Model Base function')
-model_base.to_csv('Untitled Folder/Model_Base_{}.csv'.format(confs['PRODUCT_TYPE']), index=False)
-#print('After model_base:', model_base.shape)
-print('Initiation done')
-
-
-def historical_data_func():
-    """
-        Calling query for defining Historical data and saving it in a dataframe
-        Arguments: NA
-        Return: 1 dataframe
-    """
-    global confs
-    client = bigquery.Client()
-    sub_types = ''
-    sub_types = Loan_categories(confs)
-    #print(sub_types)
-    loan_subtypes = ''
-    loan_subtypes = remove_contributor_types(confs)
-                                      
-                                      
-    query = f"""WITH CTE1 AS (
-                SELECT inq.PHONE_1, acc.*, app.created_date, app.customer_id, app.phone, app.gender AS gender,
-                    app.is_valid_pan, app.marital_status, app.income, app.city_tier, app.state, app.profession_type, app.residence_type,
-                    app.total_work_experience, app.qualification, app.existing_emi, app.company_type, app.emi_amount,
-                    app.desired_loan_amount, app.tenure, app.loan_purpose,
-                    ROW_NUMBER() OVER (PARTITION BY inq.CREDT_RPT_ID ORDER BY acc.DISBURSED_DT DESC) AS rn
-                FROM `{confs['INQUIRY_TABLE']}` AS inq
-                LEFT JOIN `{confs['ACCOUNT_TABLE']}` AS acc ON inq.CREDT_RPT_ID = acc.CREDT_RPT_ID
-                LEFT JOIN `{confs['PROJECT_ID']}.{confs['DESTINATION_ID']}` AS app ON inq.PHONE_1 = app.PHONE
-                WHERE 
-                    ACCT_TYPE IN ({sub_types})
-                    AND DATE(app.created_date) <= acc.DISBURSED_DT
-                    AND acc.DISBURSED_DT <= DATE '{confs['DISBURSED_DATE_END']}'
-                    AND DATE_DIFF(acc.DATE_REPORTED, acc.DISBURSED_DT, MONTH) BETWEEN {confs['DATE_DIFF_START']} AND {confs['DATE_DIFF_END']}
-                    AND acc.OWNERSHIP_IND NOT IN ({loan_subtypes})
-            ),
-
-            CTE2 AS (
-                SELECT * FROM CTE1 
-                WHERE CTE1.rn = 1
-            ),
-
-            CTE3 AS (
-                SELECT 
-                    CTE2.CREDT_RPT_ID, T1.*,
-                    CTE2.DISBURSED_DT AS Ref_DISBURSED_DT,
-                    DATE_DIFF(CTE2.DISBURSED_DT, T1.DISBURSED_DT, MONTH) AS Prev_loan_LOR,
-                    LENGTH(T1.DPD___HIST) / 3 AS Count_DPD_stream,
-                    DATE_ADD(T1.DATE_REPORTED, INTERVAL CAST((LENGTH(T1.DPD___HIST) / 3 * (-1) + 1) AS INT64) MONTH) AS DPD_First_month
-                FROM 
-                    `{confs['ACCOUNT_TABLE']}` AS T1 
-                JOIN 
-                    CTE2 ON CTE2.CREDT_RPT_ID = T1.CREDT_RPT_ID
-                    AND CTE2.DISBURSED_DT > T1.DISBURSED_DT
-            )
-
-            SELECT *, DATE_DIFF(Ref_DISBURSED_DT, DPD_First_month, MONTH) AS DPD_month_tb_considered 
-            FROM CTE3
-            WHERE ACCT_TYPE NOT LIKE 'O%t'
-AND ACCT_TYPE IN ({sub_types});
-            """
-
-    #print(query)
-    # Run the query
-    query_job = client.query(query)
-    results = query_job.result()
-
-    df = results.to_dataframe()
-
-    # df.to_csv('Historical_Data.csv', index=False)
-    return df
-
-
-historical_data = historical_data_func()
-print('Initiating Historical function')
-historical_data.to_csv('Untitled Folder/Historical_Data_{}.csv'.format(confs['PRODUCT_TYPE']), index=False)
-#print('After historical_data:', historical_data.shape)
-print('Initiation done')
 
 def read_ioi_func():
     
@@ -402,20 +276,40 @@ def merged_data_func():
         Arguments: NA
         Return: 1 dataframe
     """
-    data1 = pd.read_csv('Untitled Folder/Model_Base_{}.csv'.format(confs['PRODUCT_TYPE']))
-    data2 = pd.read_csv('Untitled Folder/Historical_Data_{}.csv'.format(confs['PRODUCT_TYPE']))
-    data3 = pd.read_csv('Untitled Folder/IOI_Data_{}.csv'.format(confs['PRODUCT_TYPE']))
-    
-    def replace(df, column):
-        df['CLOSE_DT'] = pd.to_datetime(df['CLOSE_DT'],errors='coerce')
-        df['Ref_DISBURSED_DT'] = pd.to_datetime(df['Ref_DISBURSED_DT'])
-        mask1 = df['CLOSE_DT'] > df['Ref_DISBURSED_DT']
-        mask2 = df['CLOSE_DT'] > '2022-10-31' 
-        df.loc[mask1, column] = 'Active'
-        df.loc[mask2, column] = 'Active'
-        return df
+    print('Initiating Swarnavos query')
+    #data1 = pd.read_csv('Untitled Folder/Model_Base_{}.csv'.format(confs['PRODUCT_TYPE']))
+    query_for_test_data = f"""WITH CTE1 AS (
+    SELECT *
+    FROM `{confs['PROJECT_ID']}.{confs['DESTINATION_ID']}` AS app
+    LEFT JOIN `{confs['INQUIRY_TABLE']}` AS inq ON app.PHONE = inq.PHONE_1
+)
 
-    data2 = replace(data2, 'ACCOUNT_STATUS')
+SELECT *
+FROM `{confs['ACCOUNT_TABLE']}` AS acc
+LEFT JOIN CTE1 ON CTE1.CREDT_RPT_ID = acc.CREDT_RPT_ID
+              WHERE DATE(CTE1.CREATED_DATE) > DATE(acc.DISBURSED_DT);"""
+    
+    print(query_for_test_data)
+    query_job = client.query(query_for_test_data)
+    results = query_job.result()
+
+    data2 = results.to_dataframe()
+    print('data2 shape',data2.shape)
+    data2.columns = data2.columns.str.upper()
+    data2.columns = data2.columns.str.replace(' ', '_')
+    print('data2 shape',data2.columns)
+    data2.drop(columns=['_DISBURSED_AMT_HIGH_CREDIT'],inplace=True)
+    data2.rename(columns={'DESIRED_LOAN_AMOUNT':'_DISBURSED_AMT_HIGH_CREDIT'},inplace=True)
+    df_temp = data2[['CREDT_RPT_ID', 'TENURE_', 'GENDER', 'MARITAL_STATUS', 'INCOME', 'CITY_TIER', 'PROFESSION_TYPE', 'TOTAL_WORK_EXPERIENCE', 'QUALIFICATION', 'EXISTING_EMI', 'EMI_AMOUNT', 'LOAN_PURPOSE','_DISBURSED_AMT_HIGH_CREDIT', 'TENURE']]
+    df_temp.drop_duplicates(inplace=True)
+    df=pd.DataFrame(data2['CREDT_RPT_ID'].unique())
+    df.rename(columns={0:'CREDT_RPT_ID'},inplace=True)
+    df = df.merge(df_temp, how='left', on='CREDT_RPT_ID')
+    print('df shape',df.shape)
+    print('Jio Kaka')
+    
+    
+    data3 = pd.read_csv('Untitled Folder/IOI_Data_{}.csv'.format(confs['PRODUCT_TYPE']))
     
     def pivot_and_aggregation_of_inquiry(df_ioi):
         """
@@ -438,6 +332,7 @@ def merged_data_func():
         Arguments: 1 dataframe
         Return: 1 dataframe
         """
+        print('Contributor')
         categories = {
             'Category 1': ['NBF', 'CCC'],
             'Category 2': ['COP', 'OFI', 'HFC', 'RRB', 'MFI'],
@@ -470,6 +365,7 @@ def merged_data_func():
         Arguments: 1 dataframe
         Return: 1 dataframe
         """
+        print('Account Status')
         categories = {
             'Category 1': ['Active'],
             'Category 2': ['Closed'],
@@ -491,91 +387,6 @@ def merged_data_func():
                               'Category 3': 'ACCOUNT_STATUS_Others'}, inplace=True)
 
         return as_df
-
-    
-
-    contributor_categories_df = contributor_categories(data2)
-    #data1->Model Base   data2-> Historical Data
-    data1 = pd.merge(data1, contributor_categories_df, on='CREDT_RPT_ID', how='left')
-    #print('After contributer_categories:', data1.shape)
-
-    account_status_df = account_status(data2)
-    #print('account_status_df:', account_status_df.shape)
-    data1 = pd.merge(data1, account_status_df, on='CREDT_RPT_ID', how='left')
-    #print('After account_status:', data1.shape)
-
-    def customer_type(df_t1):
-        """
-        Aggregation based on customer type and return good/bad customer type through delinquency and   touching bucket through user input.
-        Arguments: 1 dataframe
-        Return: 1 dataframe
-        """
-        df_t1.drop_duplicates(inplace=True)
-
-        def split_dpd_hist(x):
-            if isinstance(x, str) and x != "":
-                return [x[i:i + 3] for i in range(0, len(x), 3)]
-            else:
-                return []
-
-        # Split the 'DPD___HIST' column into 36 separate columns and reverse the order
-        df_t1['DPD___HIST'] = df_t1['DPD___HIST'].apply(split_dpd_hist)
-
-        # Reverse the order of values in each list
-        df_t1['DPD___HIST'] = df_t1['DPD___HIST'].apply(lambda x: x[::-1])
-
-        # Create 36 new columns for each month
-        for i in range(1, 37):
-            df_t1[f'M{i}'] = df_t1['DPD___HIST'].apply(lambda x: x[i - 1] if i <= len(x) else '')
-
-        # Replace "XXX" and "DDD" values with "000" in all columns
-        for i in range(1, 37):
-            df_t1[f'M{i}'] = df_t1[f'M{i}'].replace({"XXX": "000", "DDD": "000"})
-
-        # Define a function to categorize the values into buckets
-        def categorize_value(value):
-            if value == "000":
-                return 0
-            elif value.isdigit() and 1 <= int(value) <= 30:
-                return 1
-            elif value.isdigit() and 31 <= int(value) <= 60:
-                return 2
-            elif value.isdigit() and 61 <= int(value) <= 90:
-                return 3
-            elif value.isdigit() and int(value) > 90:
-                return 4
-            return value  # Return the original value if it doesn't match any criteria
-
-        # Apply the categorize_value function to each of the 36 columns
-        for i in range(1, 37):
-            column_name = f'M{i}'
-            df_t1[column_name] = df_t1[column_name].apply(categorize_value)
-
-        # Convert "month1" through "month36" columns to integers, handling non-numeric values
-        for i in range(1, 37):
-            column_name = f'M{i}'
-            df_t1[column_name] = pd.to_numeric(df_t1[column_name], errors='coerce').fillna(0).astype(int)
-
-        def find_first_delinquency(row):
-            for i in range(1, int(confs['ROLLING_WINDOW']) + 1):
-                column_name = f'M{i}'
-                if int(row[column_name]) >= int(confs['BUCKET']):
-                    return i
-            return 0  # If no delinquency is found, return 0
-
-        # Apply the find_first_delinquency function to each row to create the "first_delinquency" column
-        df_t1['first_delinquency'] = df_t1.apply(find_first_delinquency, axis=1)
-
-        # Create a new column 'Good/Bad' based on the condition
-        df_t1['Good/Bad'] = np.where(df_t1['first_delinquency'] == 0, 'Good', 'Bad')
-
-        # Convert 'Good' to 0 and 'Bad' to 1
-        df_t1['Good/Bad'] = df_t1['Good/Bad'].replace({'Good': 0, 'Bad': 1})
-        df_t1.rename(columns= {'Good/Bad' : 'Target'}, inplace = True)
-        # df_t1.rename(columns = {'Good/Bad':'Target'}, inplace = True)
-        #print('Customer_type is about to end')
-
-        return df_t1
     
     def max_delinquency(df_t2):
         """
@@ -583,6 +394,7 @@ def merged_data_func():
         Arguments: 1 dataframe
         Return: 1 dataframe
         """
+        print('Max Deli')
         df_t2.drop_duplicates(inplace=True)
         #print('CREDT_RPT_ID:', len(df_t2['CREDT_RPT_ID'].unique()))
         #print('No of rows:', df_t2.shape)
@@ -638,22 +450,10 @@ def merged_data_func():
 
         df_t2['CURRENT_BUCKET'] = df_t2.apply(calculate_current_bucket, axis=1)
         df_t2['CURRENT_BUCKET'] = df_t2['CURRENT_BUCKET'].replace('<NA>', np.nan)
-
-
-        df_t2_max_delinquency = df_t2.groupby('CREDT_RPT_ID')['CURRENT_BUCKET'].max().reset_index()
         
+        df_t2_max_delinquency = df_t2.groupby('CREDT_RPT_ID')['CURRENT_BUCKET'].max().reset_index()
         df_t2_max_delinquency.rename(columns={'CURRENT_BUCKET': 'MAX_DELINQUENCY'}, inplace=True)
         
-
-        # df_t2['max_delinquency_status'] = df_t2['CURRENT_BUCKET'].apply(extract_max_delinquency_status)
-
-        
-        
-        # df_t2_max_delq = df_t2.groupby(['CREDT_RPT_ID']).agg({
-        #     'max_delinquency_status': 'max'
-        # }).reset_index()
-        
-
         #print('Max_delinquency function done')
         return df_t2_max_delinquency
     
@@ -681,36 +481,35 @@ def merged_data_func():
         print("-------Rocky Return",agg_df.shape)
         return agg_df
 
-########################################################################################################     
-    #print('Before Customer_type:', data1.shape)
-    data1 = customer_type(data1)
-    #print('After Customer_type:', data1.shape)
+######################################################################################################
     
-    max_delinquency_df = max_delinquency(data2)
-    print('After max_delinquency:', max_delinquency_df.shape)
-    print('bvbwde3nbbdnbs:',max_delinquency_df.columns)
-    
-    print('Before joining max_delinquency:', data1.shape)
-    data1 = pd.merge(data1, max_delinquency_df, on='CREDT_RPT_ID', how='left')
-    data1.fillna(-1, inplace=True)
-    print('After joining max_delinquency:', data1.shape)
-    #data1 = pd.merge(data1, customer_type_df, on='CREDT_RPT_ID', how='left')
-
-
-    print('Before going into Rockys code row number in data2', data2.shape)
+    contributor_categories_df = contributor_categories(data2)
+    contributor_categories_df.reset_index(inplace=True)
+    df = pd.merge(df, contributor_categories_df, how='left', on='CREDT_RPT_ID')
+    #print(contributor_categories_df.head())
+    account_status_df = account_status(data2)
+    account_status_df.reset_index(inplace=True)
+    df = pd.merge(df, account_status_df, how='left', on='CREDT_RPT_ID')    
+    #max_delinquency_df = max_delinquency(data2)
+    #df = pd.merge(df, max_delinquency_df, how='left', on='CREDT_RPT_ID')
+    #df.fillna(-1, inplace=True)
+    #data2_concat = pd.merge(data2_concat, max_delinquency_df, how='inner', on='CREDT_RPT_ID')
+    #print('After max_delinquency:', max_delinquency_df.shape)
+    print(df.shape)
+    #print('Before going into Rockys code', data1.shape)
     aggregate_df = aggregating_disbursed_and_current_balance(data2)
-    print('After coming out from Rocky code:', aggregate_df.shape)
-    
-    data1 = pd.merge(data1, aggregate_df, on='CREDT_RPT_ID', how='left')
+    df = pd.merge(df, aggregate_df, how='left', on='CREDT_RPT_ID')
+    print(df.shape)
+    #print('After coming out from Rocky code:', aggregate_df.shape)
     
     columns_to_drop = [f'M{i}' for i in range(37)]
     additional_columns = ['LOS_APP_ID', 'CANDIDATE___ID', 'CUSTOMER_ID_MBR_ID', 'BRANCH', 'KENDRA', 'SELF_INDICATOR', 'MATCH_TYPE', 'ACC_NUM', 'CREDIT_GRANTOR', 'ACCT_TYPE', 'CONTRIBUTOR_TYPE', 'DATE_REPORTED', 'OWNERSHIP_IND', 'ACCOUNT_STATUS', 'DISBURSED_DT', 'CLOSE_DT', 'LAST_PAYMENT_DATE', 'CREDIT_LIMIT_SANC_AMT', '_INSTALLMENT_AMT', 'INSTALLMENT_FREQUENCY', 'WRITE_OFF_DATE', '_OVERDUE_AMT', '_WRITE_OFF_AMT', 'ASSET_CLASS', '_ACCOUNT_REMARKS', 'LINKED_ACCOUNTS', 'REPORTED_DATE___HIST_', 'DPD___HIST', 'ASSET_CLASS___HIST_', 'HIGH_CRD___HIST_', 'CUR_BAL___HIST_', 'DAS___HIST_', 'AMT_OVERDUE___HIST_', 'AMT_PAID___HIST_', 'Unnamed__41', 'rn', 'PHONE_1', 'CREDT_RPT_ID_1']
 
     columns_to_drop.extend(additional_columns)
 
-    data1 = data1.drop(columns=columns_to_drop, errors='ignore')
+    df = df.drop(columns=columns_to_drop, errors='ignore')
     
-    data1 = pd.merge(data1, data3, on='CREDT_RPT_ID', how='left')
+    data1 = pd.merge(df, data3, on='CREDT_RPT_ID', how='left')
     
     data1['Number of Inquiry'].replace(np.nan, 0, inplace=True)
     
@@ -719,9 +518,6 @@ def merged_data_func():
 
 
 ##################################################################################################
-
-# def snake_case_and_uppercase(column_name):
-#     return column_name.replace(' ', '_').upper()
 
 merged_data = merged_data_func()
 # merged_data.columns = merged_data.columns.map(snake_case_and_uppercase())
@@ -736,28 +532,80 @@ def replace_tenure_null(df, TENURE_, TENURE):
 df = replace_tenure_null(df, 'TENURE_', 'TENURE')
 
 columns_to_fill = [
-    '_CURRENT_BAL',
+    #'_CURRENT_BAL',
     'CONTRIBUTOR_TYPE_NBF_CCC',
     'CONTRIBUTOR_TYPE_COP_OFI_HFC_RRB_MFI',
     'CONTRIBUTOR_TYPE_FRB_NAB_PRB_SFB',
-    'CONTRIBUTOR_TYPE_ARC',
+    #'CONTRIBUTOR_TYPE_ARC',
     'ACCOUNT_STATUS_ACTIVE',
     'ACCOUNT_STATUS_CLOSED',
     'ACCOUNT_STATUS_OTHERS',
+   # 'MAX_DELINQUENCY_STATUS',
     'TOTAL_DISBURSED_AMT_HIGH_CREDIT',
     'TOTAL_CURRENT_BAL',
     'ACTIVE_TOTAL_DISBURSED_AMT_HIGH_CREDIT',
-    'ACTIVE_TOTAL_CURRENT_BAL'
+    'ACTIVE_TOTAL_CURRENT_BAL',
+    'ACCOUNT_STATUS_ACTIVE',
+    'ACCOUNT_STATUS_OTHERS'
 ]
 
-df[columns_to_fill] = df[columns_to_fill].fillna(0)
-
+#df[columns_to_fill] = df[columns_to_fill].fillna(0)
+df[columns_to_fill].fillna(0,inplace=True)
 additional_columns = ['_INCOME_INDICATOR_', '_OCCUPATION', 'CREATED_DATE', 'CUSTOMER_ID', 'TENURE', 'PHONE', 'RESIDENCE_TYPE', 'DESIRED_LOAN_AMOUNT', 'FIRST_DELINQUENCY', 'TOTAL_CURRENT_BAL']
 
-df = df.drop(columns=additional_columns, errors='ignore')
+#df = df.drop(columns=additional_columns, errors='ignore')
+
+df = df[['CREDT_RPT_ID', '_DISBURSED_AMT_HIGH_CREDIT', 'TENURE_', 'GENDER', 'MARITAL_STATUS', 'INCOME',
+       'CITY_TIER', 'PROFESSION_TYPE', 'TOTAL_WORK_EXPERIENCE',
+       'QUALIFICATION', 'EXISTING_EMI', 'EMI_AMOUNT', 'LOAN_PURPOSE', 'CONTRIBUTOR_TYPE_NBF_CCC', 'CONTRIBUTOR_TYPE_COP_OFI_HFC_RRB_MFI', 'CONTRIBUTOR_TYPE_FRB_NAB_PRB_SFB', 'CONTRIBUTOR_TYPE_ARC', 'ACCOUNT_STATUS_ACTIVE', 'ACCOUNT_STATUS_OTHERS']]
 
 print('Initiating Merged function')
-df.to_csv('Untitled Folder/Training Data/{}_Training_Data.csv'.format(confs['PRODUCT_TYPE']), index=False)
+df.to_csv('Untitled Folder/Testing Data/Test_{}.csv'.format(confs['PRODUCT_TYPE']), index=False)
 print('Final df shape is:', df.shape)
 #print('Final columns:', list(merged_data.columns))
-print('Successfully created the Training data')
+print('Successfully created the Testing data')
+
+def Model_Building(df):
+
+    with open('Untitled Folder/Pickle/lr_v0_2.pickle', 'rb') as file:
+        # Load the object from the file
+        model = pickle.load(file)
+
+
+    with open('Untitled Folder/Pickle/scaler0_2.pickle', 'rb') as file:
+        # Load the object from the file
+        scaler = pickle.load(file)
+
+    # Categorical columns for label encoding
+    columns = ['GENDER', 'MARITAL_STATUS', 'CITY_TIER', 'PROFESSION_TYPE','TOTAL_WORK_EXPERIENCE','QUALIFICATION',
+               'EXISTING_EMI', 'EMI_AMOUNT','LOAN_PURPOSE']
+
+    def label_enq(data, columns):
+        from sklearn.preprocessing import LabelEncoder
+        label_encoder = LabelEncoder()  
+        for column in columns:
+            data[column] = label_encoder.fit_transform(data[column])
+        return data    
+
+    data = label_enq(df, columns)
+    columns_to_scale=['_DISBURSED_AMT_HIGH_CREDIT','TENURE_','INCOME','EMI_AMOUNT']
+    df_scaled=pd.DataFrame(scaler.transform(df[columns_to_scale]),columns=columns_to_scale)
+    
+    data = data.drop(columns = columns_to_scale, axis = 1)
+    
+    for feat in columns_to_scale:
+        data[feat]=df_scaled[feat]
+
+        
+    data['ACCOUNT_STATUS_ACTIVE'].fillna(0,inplace=True)
+    data['ACCOUNT_STATUS_OTHERS'].fillna(0,inplace=True)
+    
+    preds=model.predict(data.drop(columns=['CREDT_RPT_ID']))
+    tested_df=pd.DataFrame({'CREDT_RPT_ID':data['CREDT_RPT_ID'],'PD':list(preds)})
+    tested_df.to_csv('Untitled Folder/Output/Output.csv', index=False)
+    
+    print('Model Hitted Successfully')
+    return
+
+Model_Building(df)
+
