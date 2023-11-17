@@ -7,7 +7,7 @@ client = bigquery.Client()
 # Define the SQL query
 query = """
     SELECT *
-    FROM `geoalgo-208508.roopya_analytics_dw.Kosh_Account`
+    FROM `geoalgo-208508.roopya_analytics_dw.Kosh_Consolidated_2`
 """
 # Run the query
 query_job = client.query(query)
@@ -18,7 +18,7 @@ df = results.to_dataframe()
 
 # Split the DPD columns into 36 columns
 for i in range(36):
-    df[f'DAYS_PAST_DUE_HISTORY_MONTH_{i+1}'] = df['DPD___HIST'].str[i*3:i*3+3]
+    df[f'DAYS_PAST_DUE_HISTORY_MONTH_{i+1}'] = df['DAYS_PAST_DUE_HISTORY'].str[i*3:i*3+3]
 
 # Split Amount Overdue columns
 def split_and_convert_column(df, column_name, num_columns):
@@ -30,7 +30,7 @@ def split_and_convert_column(df, column_name, num_columns):
     return df
 
 # Use the function to split and convert the column
-df_result = split_and_convert_column(df, 'AMT_OVERDUE___HIST_', 36)
+df_result = split_and_convert_column(df, 'AMOUNT_OVERDUE_HISTORY', 36)
 
 # Divide the dataframe according to applicant type
 df_salaried = df[df['KOSH_APPLICANT_TYPE'] == 1]
@@ -49,7 +49,7 @@ for col in df.columns:
 def low_dpd_check(df):
     df.fillna(0, inplace=True) 
     def check_sum_of_dpd(x):
-        dpd_sum = sum(int(dpd) if dpd not in ['XXX', 'DDD'] else 0 for dpd in x)
+        dpd_sum = sum(int(dpd) if dpd not in ['XXX', 'DDD', ''] else 0 for dpd in x)
         flag = 0
         if dpd_sum == 0:
             flag = 1
@@ -64,7 +64,7 @@ def mid_dpd_check(df):
     def check_delay_counts(x):
         flag=0
         for dpd in x:
-            if dpd in ['XXX','DDD']:
+            if dpd in ['XXX','DDD','']:
                 dpd=0
             if int(dpd)>90:
                 flag=0
@@ -81,7 +81,7 @@ def high_dpd_check(df):
     def check_delay_counts(x):
         flag=0
         for dpd in x:
-            if dpd in ['XXX','DDD']:
+            if dpd in ['XXX','DDD','']:
                 dpd=0
             if int(dpd)>90:
                 flag=1
