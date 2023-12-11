@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 import pickle
 
-print('Hmmm')
+print('Testing Script is beginning')
 confs = {}
 Home_Loan = ['Housing Loan', 'Property Loan', 'Leasing', 'Microfinance Housing Loan']
 Credit_Loan = ['Credit Card', 'Corporate Credit Card', 'Kisan Credit Card', 'Secured Credit Card', 'Loan on Credit Card']
@@ -15,25 +15,25 @@ Personal_Loan = ['Personal Loan', 'Overdraft', 'Consumer Loan', 'Loan Aganist Ba
 
 def get_confs():
     global confs
-    conf_df = pd.read_csv("confs.txt", delimiter='=', names=['KEY', 'VALUE'])
+    conf_df = pd.read_csv("confs_Testing_Data.txt", delimiter='=', names=['KEY', 'VALUE'])
     confs = dict(zip(conf_df['KEY'], conf_df['VALUE']))
     return confs
 
 def Loan_categories(confs):
     sub_types = ''
-    if confs['PRODUCT_TYPE'] == 'Home Loan':
+    if confs['PRODUCT_TYPE'] == 'Home_Loan':
         for element in Home_Loan:
             sub_types = sub_types + "'" + element + "'" + ','
         sub_types = sub_types[:len(sub_types) - 1]
-    elif confs['PRODUCT_TYPE'] == 'Auto Loan':
+    elif confs['PRODUCT_TYPE'] == 'Auto_Loan':
         for element in Auto_Loan:
             sub_types = sub_types + "'" + element + "'" + ','
         sub_types = sub_types[:len(sub_types) - 1]
-    elif confs['PRODUCT_TYPE'] == 'Personal Loan':
+    elif confs['PRODUCT_TYPE'] == 'Personal_Loan':
         for element in Personal_Loan:
             sub_types = sub_types + "'" + element + "'" + ','
         sub_types = sub_types[:len(sub_types) - 1]
-    elif confs['PRODUCT_TYPE'] == 'Credit Card':
+    elif confs['PRODUCT_TYPE'] == 'Credit_Card':
         for element in Credit_Loan:
             sub_types = sub_types + "'" + element + "'" + ','
         sub_types = sub_types[:len(sub_types) - 1]
@@ -43,7 +43,6 @@ def Loan_categories(confs):
     return sub_types
 
 get_confs()
-print(confs['PRODUCT_TYPE'])
 client = bigquery.Client()
 project_id = f"{confs['PROJECT_ID']}"
 destination_table_id = f"{confs['DESTINATION_ID']}"
@@ -202,7 +201,7 @@ def basic_cleaning_steps():
 
     df1 = df.drop(columns = ['city'], axis = 1)
     
-    print(df1.columns)
+    
     df1.to_csv('Untitled Folder/Raw_Cleaned_dataset.csv', index=False,index_label=False)
     df2 = pd.read_csv('Untitled Folder/Raw_Cleaned_dataset.csv')
     
@@ -226,10 +225,10 @@ def read_ioi_func():
     client = bigquery.Client()
     sub_types = ''
     sub_types = Loan_categories(confs)
-    #print(sub_types)
+    print(sub_types)
     loan_subtypes = ''
     loan_subtypes = remove_contributor_types(confs)
-    
+    print(sub_types)
     query = f"""WITH CTE1 AS (
                   SELECT inq.CREDT_RPT_ID, inq.PHONE_1, acc.DISBURSED_DT, acc.DATE_REPORTED, app.created_date,
                     ROW_NUMBER() OVER (PARTITION BY inq.CREDT_RPT_ID ORDER BY acc.DISBURSED_DT DESC) AS rn
@@ -238,9 +237,9 @@ def read_ioi_func():
                   LEFT JOIN `{confs['PROJECT_ID']}.{confs['DESTINATION_ID']}` AS app ON inq.PHONE_1 = app.PHONE
                   WHERE 
                     ACCT_TYPE IN ({sub_types})
-                    AND DATE(app.created_date) <= acc.DISBURSED_DT
-                    AND acc.DISBURSED_DT <= DATE '{confs['DISBURSED_DATE_END']}'
-                    AND DATE_DIFF(acc.DATE_REPORTED, acc.DISBURSED_DT, MONTH) BETWEEN {confs['DATE_DIFF_START']} AND {confs['DATE_DIFF_END']}
+                    AND DATE(app.created_date) <= DATE(acc.DISBURSED_DT)
+                    AND acc.DISBURSED_DT <= '{confs['DISBURSED_DATE_END']}'
+                    AND DATE_DIFF(DATE(acc.DATE_REPORTED), DATE(acc.DISBURSED_DT), MONTH) BETWEEN {confs['DATE_DIFF_START']} AND {confs['DATE_DIFF_END']}
                     AND acc.OWNERSHIP_IND NOT IN ({loan_subtypes})
                 ),
              CTE2 AS
@@ -254,7 +253,7 @@ def read_ioi_func():
             WHERE CTE2.DISBURSED_DT > T1.INQUIRY_DATE;
             """
 
-    #print(query)
+    print(query)
     # Run the query
     query_job = client.query(query)
     results = query_job.result()
@@ -276,7 +275,7 @@ def merged_data_func():
         Arguments: NA
         Return: 1 dataframe
     """
-    print('Initiating Swarnavos query')
+    print('Initiating Application data query')
     #data1 = pd.read_csv('Untitled Folder/Model_Base_{}.csv'.format(confs['PRODUCT_TYPE']))
     query_for_test_data = f"""WITH CTE1 AS (
     SELECT *
@@ -287,17 +286,18 @@ def merged_data_func():
 SELECT *
 FROM `{confs['ACCOUNT_TABLE']}` AS acc
 LEFT JOIN CTE1 ON CTE1.CREDT_RPT_ID = acc.CREDT_RPT_ID
-              WHERE DATE(CTE1.CREATED_DATE) > DATE(acc.DISBURSED_DT);"""
+              WHERE DATE(CTE1.CREATED_DATE) > DATE(acc.DISBURSED_DT) AND ACCT_TYPE NOT LIKE 'O%t'
+AND ACCT_TYPE NOT IN ('Credit Card', 'Corporate Credit Card', 'Kisan Credit Card', 'Secured Credit Card', 'Loan on Credit Card');"""
     
-    print(query_for_test_data)
+    #print(query_for_test_data)
     query_job = client.query(query_for_test_data)
     results = query_job.result()
 
     data2 = results.to_dataframe()
-    print('data2 shape',data2.shape)
+    #print('data2 shape',data2.shape)
     data2.columns = data2.columns.str.upper()
     data2.columns = data2.columns.str.replace(' ', '_')
-    print('data2 shape',data2.columns)
+    #print('data2 shape',data2.columns)
     data2.drop(columns=['_DISBURSED_AMT_HIGH_CREDIT'],inplace=True)
     data2.rename(columns={'DESIRED_LOAN_AMOUNT':'_DISBURSED_AMT_HIGH_CREDIT'},inplace=True)
     df_temp = data2[['CREDT_RPT_ID', 'TENURE_', 'GENDER', 'MARITAL_STATUS', 'INCOME', 'CITY_TIER', 'PROFESSION_TYPE', 'TOTAL_WORK_EXPERIENCE', 'QUALIFICATION', 'EXISTING_EMI', 'EMI_AMOUNT', 'LOAN_PURPOSE','_DISBURSED_AMT_HIGH_CREDIT', 'TENURE']]
@@ -306,7 +306,7 @@ LEFT JOIN CTE1 ON CTE1.CREDT_RPT_ID = acc.CREDT_RPT_ID
     df.rename(columns={0:'CREDT_RPT_ID'},inplace=True)
     df = df.merge(df_temp, how='left', on='CREDT_RPT_ID')
     print('df shape',df.shape)
-    print('Jio Kaka')
+    print('*************************************************************************************************************************************************')
     
     
     data3 = pd.read_csv('Untitled Folder/IOI_Data_{}.csv'.format(confs['PRODUCT_TYPE']))
@@ -332,7 +332,7 @@ LEFT JOIN CTE1 ON CTE1.CREDT_RPT_ID = acc.CREDT_RPT_ID
         Arguments: 1 dataframe
         Return: 1 dataframe
         """
-        print('Contributor')
+        #print('Contributor')
         categories = {
             'Category 1': ['NBF', 'CCC'],
             'Category 2': ['COP', 'OFI', 'HFC', 'RRB', 'MFI'],
@@ -365,7 +365,7 @@ LEFT JOIN CTE1 ON CTE1.CREDT_RPT_ID = acc.CREDT_RPT_ID
         Arguments: 1 dataframe
         Return: 1 dataframe
         """
-        print('Account Status')
+        #print('Account Status')
         categories = {
             'Category 1': ['Active'],
             'Category 2': ['Closed'],
@@ -394,7 +394,7 @@ LEFT JOIN CTE1 ON CTE1.CREDT_RPT_ID = acc.CREDT_RPT_ID
         Arguments: 1 dataframe
         Return: 1 dataframe
         """
-        print('Max Deli')
+        #print('Max Deli')
         df_t2.drop_duplicates(inplace=True)
         #print('CREDT_RPT_ID:', len(df_t2['CREDT_RPT_ID'].unique()))
         #print('No of rows:', df_t2.shape)
@@ -463,10 +463,9 @@ LEFT JOIN CTE1 ON CTE1.CREDT_RPT_ID = acc.CREDT_RPT_ID
         Arguments: 1 dataframe
         Return: 1 dataframe
         """
-        print("-------Rocky Func start")
         agg_df = pd.DataFrame(df_q2['CREDT_RPT_ID'].unique())
         agg_df.rename(columns={0:'CREDT_RPT_ID'},inplace=True)
-        print("-------Rocky Wrong",agg_df.shape)
+        
         agg_total_disbursed = df_q2.groupby('CREDT_RPT_ID')['_DISBURSED_AMT_HIGH_CREDIT'].sum().reset_index()
         agg_total_current_bal = df_q2.groupby('CREDT_RPT_ID')['_CURRENT_BAL'].sum().reset_index()
         agg_df = pd.merge(agg_df, agg_total_disbursed, on='CREDT_RPT_ID', how='left')
@@ -478,7 +477,6 @@ LEFT JOIN CTE1 ON CTE1.CREDT_RPT_ID = acc.CREDT_RPT_ID
         agg_df = pd.merge(agg_df, agg_total_disbursed, on='CREDT_RPT_ID', how='left')
         agg_df = pd.merge(agg_df, agg_total_current_bal, on='CREDT_RPT_ID', how='left')
         agg_df = agg_df.rename(columns={'_DISBURSED_AMT_HIGH_CREDIT': 'Active_TOTAL_DISBURSED_AMT_HIGH_CREDIT', '_CURRENT_BAL': 'Active_TOTAL_CURRENT_BAL'})
-        print("-------Rocky Return",agg_df.shape)
         return agg_df
 
 ######################################################################################################
@@ -495,11 +493,11 @@ LEFT JOIN CTE1 ON CTE1.CREDT_RPT_ID = acc.CREDT_RPT_ID
     #df.fillna(-1, inplace=True)
     #data2_concat = pd.merge(data2_concat, max_delinquency_df, how='inner', on='CREDT_RPT_ID')
     #print('After max_delinquency:', max_delinquency_df.shape)
-    print(df.shape)
+    #print(df.shape)
     #print('Before going into Rockys code', data1.shape)
     aggregate_df = aggregating_disbursed_and_current_balance(data2)
     df = pd.merge(df, aggregate_df, how='left', on='CREDT_RPT_ID')
-    print(df.shape)
+    #print(df.shape)
     #print('After coming out from Rocky code:', aggregate_df.shape)
     
     columns_to_drop = [f'M{i}' for i in range(37)]
@@ -560,12 +558,16 @@ df = df[['CREDT_RPT_ID', '_DISBURSED_AMT_HIGH_CREDIT', 'TENURE_', 'GENDER', 'MAR
        'QUALIFICATION', 'EXISTING_EMI', 'EMI_AMOUNT', 'LOAN_PURPOSE', 'CONTRIBUTOR_TYPE_NBF_CCC', 'CONTRIBUTOR_TYPE_COP_OFI_HFC_RRB_MFI', 'CONTRIBUTOR_TYPE_FRB_NAB_PRB_SFB', 'CONTRIBUTOR_TYPE_ARC', 'ACCOUNT_STATUS_ACTIVE', 'ACCOUNT_STATUS_OTHERS']]
 
 print('Initiating Merged function')
-df.to_csv('Untitled Folder/Testing Data/Test_{}.csv'.format(confs['PRODUCT_TYPE']), index=False)
-print('Final df shape is:', df.shape)
+
+print(df.columns)
+error
+df.to_csv('Untitled Folder/Testing Data/Testing Data.csv', index=False)
+print('#*#*#*#*#*#*#*#*#*#*#*#*#*#*#*#*#   Final df shape is:', df.shape)
 #print('Final columns:', list(merged_data.columns))
 print('Successfully created the Testing data')
 
 def Model_Building(df):
+    print('Initiating Model Hitting and Scoring')
 
     with open('Untitled Folder/Pickle/lr_v0_2.pickle', 'rb') as file:
         # Load the object from the file
@@ -604,7 +606,47 @@ def Model_Building(df):
     tested_df=pd.DataFrame({'CREDT_RPT_ID':data['CREDT_RPT_ID'],'PD':list(preds)})
     tested_df.to_csv('Untitled Folder/Output/Output.csv', index=False)
     
-    print('Model Hitted Successfully')
+    print('Model Successfully')
+    
+    data1 = data.drop(columns=['CREDT_RPT_ID'])
+    coefficients = model.coef_[0]
+    intercept = model.intercept_[0]
+
+    # Calculate log-odds for each observation using the logistic regression coefficients
+    log_odds = (data1 * coefficients).sum(axis=1) + intercept
+    pdo = 20
+    factor = pdo / np.log(2) 
+    offset = 600
+
+    # Calculate scores using the log-odds, factor, and offset
+    scores = factor * log_odds + offset
+    scores = np.round(scores).astype(int)
+    score_ranges = [300, 450, 575, 750, 900]  
+    score_labels = ['Very Low', 'Low', 'Great', 'Excellent']
+
+    # Create a DataFrame to store the credit scores and categories
+    #credit_score_df = pd.DataFrame({'Roopya Score': scores})
+
+    # Use pd.cut to categorize the scores into these categories and add 'category' column
+    #credit_score_df['Category'] = pd.cut(credit_score_df['Roopya Score'], bins=score_ranges, labels=score_labels, right=False)  # Change right to False
+    
+    credit_score_df = pd.DataFrame({'CREDT_RPT_ID': data['CREDT_RPT_ID'], 'Roopya_Score': scores})
+    credit_score_df['Category'] = pd.cut(credit_score_df['Roopya_Score'], bins=score_ranges, labels=score_labels, right=False)  # Change right to False
+
+    # Print or save the resulting credit score DataFrame
+    
+    credit_score_final_df = credit_score_df[['CREDT_RPT_ID', 'Roopya_Score', 'Category']]
+    credit_score_final_df.drop_duplicates(inplace=True)
+    print('The score of first 50 is: ',credit_score_final_df.head(5))
+    print('Its the value count:',credit_score_final_df['Category'].value_counts())
+    print('#################################################################:', credit_score_final_df.shape)
+    credit_score_final_df.to_csv('Untitled Folder/Output/Score.csv', index=False)
+    client = bigquery.Client()
+    project_id = f"{confs['PROJECT_ID']}"
+    destination_table_id = "geoalgo-208508.roopya_analytics_dw.Credit_Score_Automation_Script"
+
+    to_gbq(credit_score_final_df, destination_table_id, project_id=project_id, if_exists='replace')
+    
     return
 
 Model_Building(df)
